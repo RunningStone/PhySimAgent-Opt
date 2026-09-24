@@ -1,0 +1,3 @@
+defaults: [../matrix/walk.yaml, ../environment.yaml]
+compat_source: CONFIGs/batch1/aero2d/matrix/walk.yaml
+exp_name: v3_interface_v1_walk

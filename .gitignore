@@ -1,0 +1,25 @@
+# This remote tracks code, experiment definitions and reproducible environments.
+/*
+!/.gitignore
+!/README.md
+!/SRC/
+!/CONFIGs/
+!/EXP/
+!/ENV/
+!/RELATED_REPOs/
+
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+**/*.egg-info/
+**/dist/
+**/build/
+**/.DS_Store
+/ENV/.venv/
+/ENV/.native/
+/ENV/.env
+/RELATED_REPOs/*/
+# External sources are restored from pinned revisions plus tracked patches.
+**/.env
+**/.env.*
+!**/.env.example

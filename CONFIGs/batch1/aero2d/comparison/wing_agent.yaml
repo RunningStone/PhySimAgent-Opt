@@ -1,0 +1,12 @@
+defaults: [../compat/v1_lineB.yaml]
+exp_name: v3_wing_agent
+workflow:
+  mode: agent
+  fixed: [evaluate]
+limits:
+  max_tools_per_candidate: 3
+  total_tools: 92
+  solve_slots: 32
+  total_llm: 90
+  wall_clock_s: 36000
+  validation_reserve: 2

@@ -1,0 +1,71 @@
+environment:
+  name: deterministic-third-environment
+  entrypoint: test.exp.deterministic_environment:invoke
+  version: fixture-v1
+  data:
+    dataset: deterministic-public-fixture
+    version: sha256:fixture-data
+task:
+  name: deterministic-third-environment
+  prompt: Evaluate one bounded scalar.
+  params:
+    x:
+      type: float
+      bounds: [0.0, 1.0]
+      default: 0.5
+  options:
+    method:
+      type: string
+      allowed: [default, alternate]
+      default: default
+  objective:
+    field: value
+    direction: maximize
+    scale: 1.0
+  constraints:
+    - field: limit
+      kind: hard
+      relation: max
+      threshold: 1.0
+  trust:
+    required: [complete]
+  evaluation:
+    tool: evaluate
+    required_conditions: [fixture]
+    allowed_fidelity: [fixture]
+tools:
+  inspect:
+    description: Inspect the candidate before its terminal evaluation.
+    requires: []
+    produces: [inspection]
+    invalidates: []
+  evaluate:
+    description: Return the deterministic terminal evaluation.
+    requires: []
+    produces: [evaluation]
+    invalidates: []
+  observe_worker:
+    description: Return the process id that executes this entrypoint.
+    requires: []
+    produces: [worker_observation]
+    invalidates: []
+  timeout_tree:
+    description: Spawn one child and remain alive for timeout cleanup testing.
+    requires: []
+    produces: [timeout_observation]
+    invalidates: []
+    args:
+      worker_pid_path: {type: string, required: true}
+      child_pid_path: {type: string, required: true}
+      marker_path: {type: string, required: true}
+      sleep_s: {type: float, required: false}
+workflow:
+  mode: fixed
+  fixed: [evaluate]
+limits:
+  max_tools_per_candidate: 3
+  total_tools: 6
+  solve_slots: 6
+  total_llm: 3
+  wall_clock_s: 30.0
+  validation_reserve: 0

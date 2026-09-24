@@ -1,0 +1,13 @@
+defaults: [../_base.yaml]
+exp_name: v1_seeds                       # 独立实验目录 OUTPUTs/batch1/aero2d/v1_seeds/(tree + lines/<line>-s<seed>);缓存仍共用 store
+line: C
+seeds: [0, 1, 2]                           # seed 扰动初始设计 x0(seed 0 = 原 x0);三条线含义一致
+parallel: 3
+budget: 30
+tau: 0.4
+k_backtrack: 4
+k_stagnation: 30                           # 放宽:只由预算停止
+verify_every: 10
+cd_max: 0.06
+use_memory: true
+sensitivity: OUTPUTs/batch1/aero2d/v1/SENSITIVITY.md

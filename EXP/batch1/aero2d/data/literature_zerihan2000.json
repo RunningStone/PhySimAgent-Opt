@@ -1,0 +1,14 @@
+{
+  "source": "Zerihan, J. & Zhang, X. (2000). Aerodynamics of a single element wing in ground effect. J. Aircraft 37(6):1058-1064. doi:10.2514/2.2711",
+  "verified": "2026-09-12, text extracted from a public mirror of the paper; values read from Fig. 3a are approximate (~)",
+  "wing": "Tyrrell 026 F1 front-wing main element (derived from NASA GA(W) LS(1)-0413), chord 223.4 mm, span 1100 mm, endplates",
+  "conditions": {"U_inf_m_s": 30, "Re_per_m": 2.0e6, "Re_chord": 4.5e5, "alpha_deg": 1.0, "ground": "moving belt", "transition": "free"},
+  "ride_height_definition": "distance from ground to the lowest point on the wing at zero incidence",
+  "CL_vs_h_c_alpha1": [[1.007, 0.82], [0.313, 1.30], [0.224, 1.55], [0.179, 1.68], [0.134, 1.70], [0.112, 1.71], [0.08, 1.72], [0.067, 1.62]],
+  "CL_sign": "positive = downforce in the paper; equals -Cl in this project",
+  "max_downforce": {"CL": 1.72, "h_c": 0.08},
+  "separation_onset_h_c": 0.15,
+  "deviation_from_linear_h_c": 0.224,
+  "suction_peak_example": {"x_c": 0.179, "Cp": -4.6, "note": "worst-case uncertainty +-0.035"},
+  "freestream_CLmax": {"CL": 1.35, "alpha_deg": 11.3}
+}

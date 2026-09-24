@@ -1,0 +1,649 @@
+{
+  "source_repository": "git@github.com:RunningStone/PhySimAgent.git",
+  "source_commit": "f0f5b784fa092f878e9790107582c4c4501130d6",
+  "scope": "2D inverted NACA wing in ground effect; agent runtime and associated tests",
+  "copied_files": [
+    "CONFIGs/batch1/aero2d/_base.yaml",
+    "CONFIGs/batch1/aero2d/comparison/wing_agent.yaml",
+    "CONFIGs/batch1/aero2d/comparison/wing_fixed.yaml",
+    "CONFIGs/batch1/aero2d/compat/v1_lineA.yaml",
+    "CONFIGs/batch1/aero2d/compat/v1_lineB.yaml",
+    "CONFIGs/batch1/aero2d/compat/v1_lineC.yaml",
+    "CONFIGs/batch1/aero2d/compat/v1_seeds_lineA.yaml",
+    "CONFIGs/batch1/aero2d/compat/v1_seeds_lineB.yaml",
+    "CONFIGs/batch1/aero2d/compat/v1_seeds_lineB_nomem.yaml",
+    "CONFIGs/batch1/aero2d/compat/v1_seeds_lineC.yaml",
+    "CONFIGs/batch1/aero2d/compat/v1_seeds_lineC_nomem.yaml",
+    "CONFIGs/batch1/aero2d/compat/v1_walk.yaml",
+    "CONFIGs/batch1/aero2d/environment.yaml",
+    "CONFIGs/batch1/aero2d/matrix/lineA.yaml",
+    "CONFIGs/batch1/aero2d/matrix/lineB.yaml",
+    "CONFIGs/batch1/aero2d/matrix/lineC.yaml",
+    "CONFIGs/batch1/aero2d/matrix/seeds_lineA.yaml",
+    "CONFIGs/batch1/aero2d/matrix/seeds_lineB.yaml",
+    "CONFIGs/batch1/aero2d/matrix/seeds_lineB_nomem.yaml",
+    "CONFIGs/batch1/aero2d/matrix/seeds_lineC.yaml",
+    "CONFIGs/batch1/aero2d/matrix/seeds_lineC_nomem.yaml",
+    "CONFIGs/batch1/aero2d/matrix/walk.yaml",
+    "ENV/.python-version",
+    "ENV/pyproject.toml",
+    "EXP/batch1/__init__.py",
+    "EXP/batch1/aero2d/README.md",
+    "EXP/batch1/aero2d/__init__.py",
+    "EXP/batch1/aero2d/code/__init__.py",
+    "EXP/batch1/aero2d/code/run_lines.sh",
+    "EXP/batch1/aero2d/code/run_seeds.sh",
+    "EXP/batch1/aero2d/code/run_walk.sh",
+    "EXP/batch1/aero2d/code/solve.py",
+    "EXP/batch1/aero2d/config/runs.yaml",
+    "EXP/batch1/aero2d/data/literature_zerihan2000.json",
+    "EXP/batch1/common/README.md",
+    "EXP/batch1/common/code/run_comparison.sh",
+    "EXP/pyproject.toml",
+    "RELATED_REPOs/aideml-poc.patch",
+    "SRC/pipeline/__init__.py",
+    "SRC/pipeline/agentloop/README.md",
+    "SRC/pipeline/agentloop/__init__.py",
+    "SRC/pipeline/agentloop/design_agent.py",
+    "SRC/pipeline/agentloop/driver.py",
+    "SRC/pipeline/agentloop/environment.py",
+    "SRC/pipeline/agentloop/evaluation/__init__.py",
+    "SRC/pipeline/agentloop/evaluation/finding_report.py",
+    "SRC/pipeline/agentloop/harness.py",
+    "SRC/pipeline/agentloop/scenario.py",
+    "SRC/pipeline/agentloop/workflow.py",
+    "SRC/pipeline/exp_layer/__init__.py",
+    "SRC/pipeline/exp_layer/aero2d/README.md",
+    "SRC/pipeline/exp_layer/aero2d/__init__.py",
+    "SRC/pipeline/exp_layer/aero2d/contract.py",
+    "SRC/pipeline/exp_layer/aero2d/environment.py",
+    "SRC/pipeline/exp_layer/aero2d/evaluation/__init__.py",
+    "SRC/pipeline/exp_layer/aero2d/evaluation/sweep_report.py",
+    "SRC/pipeline/exp_layer/aero2d/evaluation/walk.py",
+    "SRC/pipeline/exp_layer/common/README.md",
+    "SRC/pipeline/exp_layer/common/__init__.py",
+    "SRC/pyproject.toml",
+    "SRC/test/conftest.py",
+    "SRC/test/exp/__init__.py",
+    "SRC/test/exp/agentloop_fixtures.py",
+    "SRC/test/exp/deterministic_environment.py",
+    "SRC/test/exp/deterministic_environment.yaml",
+    "SRC/test/flow/__init__.py",
+    "SRC/test/flow/test_flow_aero2d.py",
+    "SRC/test/flow/test_flow_agentloop.py",
+    "SRC/test/flow/test_flow_environment.py",
+    "SRC/test/smoke/__init__.py",
+    "SRC/test/smoke/test_smoke_aero2d.py",
+    "SRC/test/smoke/test_smoke_agentloop.py",
+    "SRC/test/smoke/test_smoke_agentloop_v2.py",
+    "SRC/test/smoke/test_smoke_environment.py",
+    "SRC/test/unit/__init__.py",
+    "SRC/test/unit/test_unit_aero2d.py",
+    "SRC/test/unit/test_unit_agentloop.py",
+    "SRC/test/unit/test_unit_agentloop_v2.py",
+    "SRC/test/unit/test_unit_compatibility.py",
+    "SRC/test/unit/test_unit_environment.py",
+    "SRC/test/unit/test_unit_workflow.py"
+  ],
+  "excluded": [
+    "battery",
+    "batch2",
+    "native MDO stack",
+    "historical outputs",
+    "private documents"
+  ],
+  "verification": {
+    "completed_at": "2026-09-24T12:26:01+01:00",
+    "checks": {
+      "unit": {
+        "tests": 285,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "seconds": 20.348
+      },
+      "real_solver_smoke": {
+        "tests": 20,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "seconds": 195.877
+      },
+      "scripted_tool_flow": {
+        "tests": 7,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "seconds": 3.25
+      },
+      "live_llm_tool_flow": {
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "seconds": 65.157
+      }
+    },
+    "configuration_validation": {
+      "runnable": 22,
+      "fragments": 2,
+      "all_resolved": true
+    },
+    "imports_local": true,
+    "baseline": {
+      "n_cases": 3,
+      "n_steps": 3,
+      "n_failed": 0,
+      "n_llm_calls": 0,
+      "best_metric": 0.766626919,
+      "stop_reason": "budget"
+    },
+    "baseline_holdout_cases": 2,
+    "evidence_directory": "OUTPUTs/20260924_120000-test-inheritance",
+    "note": "Scripted flow and live solver/LLM evidence are reported separately. No old run outputs were imported."
+  },
+  "imported_files": [
+    {
+      "path": "CONFIGs/batch1/aero2d/_base.yaml",
+      "source_sha256": "ee31ae0537bc6a0fbb5d1dbbca02f85285b49011e820dff7626e4875ac539cce",
+      "current_sha256": "ee31ae0537bc6a0fbb5d1dbbca02f85285b49011e820dff7626e4875ac539cce",
+      "modified": false
+    },
+    {
+      "path": "CONFIGs/batch1/aero2d/comparison/wing_agent.yaml",
+      "source_sha256": "add240b6cb8ae068d18c8913f6beb81242da325f36c5b11401e8cceeb399b25c",
+      "current_sha256": "add240b6cb8ae068d18c8913f6beb81242da325f36c5b11401e8cceeb399b25c",
+      "modified": false
+    },
+    {
+      "path": "CONFIGs/batch1/aero2d/comparison/wing_fixed.yaml",
+      "source_sha256": "7d8bf4befc030065eb0bbc271c9fec2bf0c7aef9fae35c797061e35a68413bd8",
+      "current_sha256": "7d8bf4befc030065eb0bbc271c9fec2bf0c7aef9fae35c797061e35a68413bd8",
+      "modified": false
+    },
+    {
+      "path": "CONFIGs/batch1/aero2d/compat/v1_lineA.yaml",
+      "source_sha256": "e1c91d0828230078409b299520b689a0e85a7abc18dac8cf8c2b36c8e53b7fd4",
+      "current_sha256": "e1c91d0828230078409b299520b689a0e85a7abc18dac8cf8c2b36c8e53b7fd4",
+      "modified": false
+    },
+    {
+      "path": "CONFIGs/batch1/aero2d/compat/v1_lineB.yaml",
+      "source_sha256": "bf8dcb6e50d84f697dc461c27a514418850ea69fbdc914880f4ff968a497f6e5",
+      "current_sha256": "bf8dcb6e50d84f697dc461c27a514418850ea69fbdc914880f4ff968a497f6e5",
+      "modified": false
+    },
+    {
+      "path": "CONFIGs/batch1/aero2d/compat/v1_lineC.yaml",
+      "source_sha256": "b054a6cb42ad5a22bf88a519eaf4102cc8ec55757e68d337d8dd032df75abab2",
+      "current_sha256": "b054a6cb42ad5a22bf88a519eaf4102cc8ec55757e68d337d8dd032df75abab2",
+      "modified": false
+    },
+    {
+      "path": "CONFIGs/batch1/aero2d/compat/v1_seeds_lineA.yaml",
+      "source_sha256": "ee857e84c3ab055410db34d1ff7e0ca2a1f9f8cd0aeb95e525cfda95ce5ab0c8",
+      "current_sha256": "ee857e84c3ab055410db34d1ff7e0ca2a1f9f8cd0aeb95e525cfda95ce5ab0c8",
+      "modified": false
+    },
+    {
+      "path": "CONFIGs/batch1/aero2d/compat/v1_seeds_lineB.yaml",
+      "source_sha256": "8fe372b0c5413490a247bdfb79d3818113478031fa01cd40636550bfef2c723a",
+      "current_sha256": "8fe372b0c5413490a247bdfb79d3818113478031fa01cd40636550bfef2c723a",
+      "modified": false
+    },
+    {
+      "path": "CONFIGs/batch1/aero2d/compat/v1_seeds_lineB_nomem.yaml",
+      "source_sha256": "679eb41da10295266254d2a86278ca4fa761640be83ba8e41049a346935a9392",
+      "current_sha256": "679eb41da10295266254d2a86278ca4fa761640be83ba8e41049a346935a9392",
+      "modified": false
+    },
+    {
+      "path": "CONFIGs/batch1/aero2d/compat/v1_seeds_lineC.yaml",
+      "source_sha256": "c73bca35ddf56b718b0412ab32b9692280214deda995121af6305ad7e7ed9d7b",
+      "current_sha256": "c73bca35ddf56b718b0412ab32b9692280214deda995121af6305ad7e7ed9d7b",
+      "modified": false
+    },
+    {
+      "path": "CONFIGs/batch1/aero2d/compat/v1_seeds_lineC_nomem.yaml",
+      "source_sha256": "d57512ae9d78cb3c08610fa7528d11ca761949f2b05555a9f1803a5b690c9bc1",
+      "current_sha256": "d57512ae9d78cb3c08610fa7528d11ca761949f2b05555a9f1803a5b690c9bc1",
+      "modified": false
+    },
+    {
+      "path": "CONFIGs/batch1/aero2d/compat/v1_walk.yaml",
+      "source_sha256": "aa240da97abd878fc2789c3d5028be2c067a77da7fbf219dd5c670a1747d118d",
+      "current_sha256": "aa240da97abd878fc2789c3d5028be2c067a77da7fbf219dd5c670a1747d118d",
+      "modified": false
+    },
+    {
+      "path": "CONFIGs/batch1/aero2d/environment.yaml",
+      "source_sha256": "71e690871b33a5f73c3708ec167fb9e8670a10c5f8804494bcc2b867f4730b61",
+      "current_sha256": "71e690871b33a5f73c3708ec167fb9e8670a10c5f8804494bcc2b867f4730b61",
+      "modified": false
+    },
+    {
+      "path": "CONFIGs/batch1/aero2d/matrix/lineA.yaml",
+      "source_sha256": "891e6420df2757c4755276a95a362908983facfcee6f9c947e8c0572ace4a54e",
+      "current_sha256": "891e6420df2757c4755276a95a362908983facfcee6f9c947e8c0572ace4a54e",
+      "modified": false
+    },
+    {
+      "path": "CONFIGs/batch1/aero2d/matrix/lineB.yaml",
+      "source_sha256": "84298f5e8ffa6992f2f4576e1750d04b2398725de717b0f640d08cd0ec1fcf5f",
+      "current_sha256": "84298f5e8ffa6992f2f4576e1750d04b2398725de717b0f640d08cd0ec1fcf5f",
+      "modified": false
+    },
+    {
+      "path": "CONFIGs/batch1/aero2d/matrix/lineC.yaml",
+      "source_sha256": "949d95aa3568b38ce7521baf6e520ddc6512c0ca2b091888e69f11e2d1ac4556",
+      "current_sha256": "949d95aa3568b38ce7521baf6e520ddc6512c0ca2b091888e69f11e2d1ac4556",
+      "modified": false
+    },
+    {
+      "path": "CONFIGs/batch1/aero2d/matrix/seeds_lineA.yaml",
+      "source_sha256": "cf9a635af16e4cc2fda3378e971cd1b77f71326b9f52cbaed1fe26454f1aa835",
+      "current_sha256": "cf9a635af16e4cc2fda3378e971cd1b77f71326b9f52cbaed1fe26454f1aa835",
+      "modified": false
+    },
+    {
+      "path": "CONFIGs/batch1/aero2d/matrix/seeds_lineB.yaml",
+      "source_sha256": "8ee8f9085ad7ca0d1bbd9499d9b7f338720ab9cac1a81fb03a4863d658ed5d48",
+      "current_sha256": "8ee8f9085ad7ca0d1bbd9499d9b7f338720ab9cac1a81fb03a4863d658ed5d48",
+      "modified": false
+    },
+    {
+      "path": "CONFIGs/batch1/aero2d/matrix/seeds_lineB_nomem.yaml",
+      "source_sha256": "041230c94e70c155523e12c02ab17916578cb03d79f73b2245ded484d386224c",
+      "current_sha256": "041230c94e70c155523e12c02ab17916578cb03d79f73b2245ded484d386224c",
+      "modified": false
+    },
+    {
+      "path": "CONFIGs/batch1/aero2d/matrix/seeds_lineC.yaml",
+      "source_sha256": "1b3ef0b8dd7f697157324020758b773e0e9d26eb33e940e20d6d853a44a78621",
+      "current_sha256": "1b3ef0b8dd7f697157324020758b773e0e9d26eb33e940e20d6d853a44a78621",
+      "modified": false
+    },
+    {
+      "path": "CONFIGs/batch1/aero2d/matrix/seeds_lineC_nomem.yaml",
+      "source_sha256": "0097cb87b5f54b8d370eb810345ca43f201f82b75865d9ff4fe45fd9a3391ff2",
+      "current_sha256": "0097cb87b5f54b8d370eb810345ca43f201f82b75865d9ff4fe45fd9a3391ff2",
+      "modified": false
+    },
+    {
+      "path": "CONFIGs/batch1/aero2d/matrix/walk.yaml",
+      "source_sha256": "eb87b14044e206f9a184b97aed62a3c33335c03e125ae4f31f1b83476fee3559",
+      "current_sha256": "eb87b14044e206f9a184b97aed62a3c33335c03e125ae4f31f1b83476fee3559",
+      "modified": false
+    },
+    {
+      "path": "ENV/.python-version",
+      "source_sha256": "7b55f8e67b5623c4bef3fa691288da9437d79d3aba156de48d481db32ac7d16d",
+      "current_sha256": "7b55f8e67b5623c4bef3fa691288da9437d79d3aba156de48d481db32ac7d16d",
+      "modified": false
+    },
+    {
+      "path": "ENV/pyproject.toml",
+      "source_sha256": "18d6b9477a78072d0a9d9fd25d2bbe928705b7c0ab3d8af97fd99ed11730d0d1",
+      "current_sha256": "23456b33e7ddcaa07d1eb329f8014799cc0bcb5525e8548bd121dfcc2bf4fa32",
+      "modified": true
+    },
+    {
+      "path": "EXP/batch1/__init__.py",
+      "source_sha256": "c371525bd5541462f02ea218d0682bcbc6243b79d5f6305cbfd246f3a5cb15e7",
+      "current_sha256": "c371525bd5541462f02ea218d0682bcbc6243b79d5f6305cbfd246f3a5cb15e7",
+      "modified": false
+    },
+    {
+      "path": "EXP/batch1/aero2d/README.md",
+      "source_sha256": "08c76dcc6a26d01120b8e41cdd86c6a2e1d7b7e1488e65d452ab31fb3f7b26c1",
+      "current_sha256": "08c76dcc6a26d01120b8e41cdd86c6a2e1d7b7e1488e65d452ab31fb3f7b26c1",
+      "modified": false
+    },
+    {
+      "path": "EXP/batch1/aero2d/__init__.py",
+      "source_sha256": "e4b813bd7224bc92062edfef6d8b51b61538a773e5807be141374cf90daf035c",
+      "current_sha256": "e4b813bd7224bc92062edfef6d8b51b61538a773e5807be141374cf90daf035c",
+      "modified": false
+    },
+    {
+      "path": "EXP/batch1/aero2d/code/__init__.py",
+      "source_sha256": "200656246dac427bf61a4f9c810f3de26b48bba410221ec4518737110a297d72",
+      "current_sha256": "200656246dac427bf61a4f9c810f3de26b48bba410221ec4518737110a297d72",
+      "modified": false
+    },
+    {
+      "path": "EXP/batch1/aero2d/code/run_lines.sh",
+      "source_sha256": "00472bfb4661ce228a88174299440a0f7c7fff0ccb585e1a2c9d8b133acbb883",
+      "current_sha256": "00472bfb4661ce228a88174299440a0f7c7fff0ccb585e1a2c9d8b133acbb883",
+      "modified": false
+    },
+    {
+      "path": "EXP/batch1/aero2d/code/run_seeds.sh",
+      "source_sha256": "76efc7dbe74c1bd877d1ba3730f3c629834e599315032ee48948eeb7be6f9728",
+      "current_sha256": "76efc7dbe74c1bd877d1ba3730f3c629834e599315032ee48948eeb7be6f9728",
+      "modified": false
+    },
+    {
+      "path": "EXP/batch1/aero2d/code/run_walk.sh",
+      "source_sha256": "651adb30485e417adb8d011fdd66178274e3649cc0a494174bf3c924622b5d20",
+      "current_sha256": "651adb30485e417adb8d011fdd66178274e3649cc0a494174bf3c924622b5d20",
+      "modified": false
+    },
+    {
+      "path": "EXP/batch1/aero2d/code/solve.py",
+      "source_sha256": "eb598569ba7a8818cfc22696bfc1a3bf7636806ae5d277b341bc61353ab60b9e",
+      "current_sha256": "eb598569ba7a8818cfc22696bfc1a3bf7636806ae5d277b341bc61353ab60b9e",
+      "modified": false
+    },
+    {
+      "path": "EXP/batch1/aero2d/config/runs.yaml",
+      "source_sha256": "b2b7310ac1f8b0171ec51d5cbb917890778bd2896ffb8df336005df3440f363a",
+      "current_sha256": "b2b7310ac1f8b0171ec51d5cbb917890778bd2896ffb8df336005df3440f363a",
+      "modified": false
+    },
+    {
+      "path": "EXP/batch1/aero2d/data/literature_zerihan2000.json",
+      "source_sha256": "d2f7f92512084bc03fda31bfa8c8760954138731a005b3ba6e16101d6a927152",
+      "current_sha256": "d2f7f92512084bc03fda31bfa8c8760954138731a005b3ba6e16101d6a927152",
+      "modified": false
+    },
+    {
+      "path": "EXP/batch1/common/README.md",
+      "source_sha256": "bae2698931abec574bb1ee699e607a9e4be87ea72e7ecb12fad923f0fec3bb29",
+      "current_sha256": "05cde873004f32bc60576f8d1cdaca6dfe09adeb4f4bd16144c1073d60e5b056",
+      "modified": true
+    },
+    {
+      "path": "EXP/batch1/common/code/run_comparison.sh",
+      "source_sha256": "2306c19adfdf3a124bb757558718ca9d2e447d4eca46dcd4725e79ddf0550f13",
+      "current_sha256": "eb15d477dba5c5cb3286d851d203c34c65e5cb52442de72b88714fe3b41be250",
+      "modified": true
+    },
+    {
+      "path": "EXP/pyproject.toml",
+      "source_sha256": "65ba39b4b755dd05bfa95795297458c96d1954afeacfdd03aefa43fc4a3db7f7",
+      "current_sha256": "c0148003433026ec0cf24ed73dee4761a18418801d576a01506b65d4dd626c3d",
+      "modified": true
+    },
+    {
+      "path": "RELATED_REPOs/aideml-poc.patch",
+      "source_sha256": "494fbef491fd23544f1cfe2f8c1ca19ce92b6a29ee0b669fdf8a17c9fe982170",
+      "current_sha256": "494fbef491fd23544f1cfe2f8c1ca19ce92b6a29ee0b669fdf8a17c9fe982170",
+      "modified": false
+    },
+    {
+      "path": "SRC/pipeline/__init__.py",
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "current_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "modified": false
+    },
+    {
+      "path": "SRC/pipeline/agentloop/README.md",
+      "source_sha256": "4a7b16054ebd419a759bb4551a02976dab73b86271078e58be216fada749edf8",
+      "current_sha256": "5da0077ab41d6dad1c13d58c73746483a9798e4d473f85bf4a261f1001322a19",
+      "modified": true
+    },
+    {
+      "path": "SRC/pipeline/agentloop/__init__.py",
+      "source_sha256": "0a34e1a25a03da1efed160bb1bb1dfbc940d65e3693e143a30c2d1dc17c9e990",
+      "current_sha256": "0a34e1a25a03da1efed160bb1bb1dfbc940d65e3693e143a30c2d1dc17c9e990",
+      "modified": false
+    },
+    {
+      "path": "SRC/pipeline/agentloop/design_agent.py",
+      "source_sha256": "4deb9222a6b9948cd2ae317e105be86250b0fe9bb67b6f522f10f6bbc660bef8",
+      "current_sha256": "4deb9222a6b9948cd2ae317e105be86250b0fe9bb67b6f522f10f6bbc660bef8",
+      "modified": false
+    },
+    {
+      "path": "SRC/pipeline/agentloop/driver.py",
+      "source_sha256": "33a5a2e006e53c759b1810df52ff16382a79e80ff29dedf1dc0b7a4687d87084",
+      "current_sha256": "b7a37a271ae24398c47eb40f0fa56f908d32e797c6c85e5f977defa2931a82d1",
+      "modified": true
+    },
+    {
+      "path": "SRC/pipeline/agentloop/environment.py",
+      "source_sha256": "a29b19497e658f633959cb5d462e91ffb12df47ea49ee341ba06c599611d9ad7",
+      "current_sha256": "851d5f65ee5abd994bfc4a5a42db872fb3b67aa4f68e0c0c38e99f7615ec7f8a",
+      "modified": true
+    },
+    {
+      "path": "SRC/pipeline/agentloop/evaluation/__init__.py",
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "current_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "modified": false
+    },
+    {
+      "path": "SRC/pipeline/agentloop/evaluation/finding_report.py",
+      "source_sha256": "2e58bc290616bcbc65682809ae33d14f9ddc09c23bf4bb2f5e373be6fe1dd2dd",
+      "current_sha256": "7a5b3fc6b14da8c0b81b02aa7ac2a2d05b887127ca167b15028d362c2479f3f4",
+      "modified": true
+    },
+    {
+      "path": "SRC/pipeline/agentloop/harness.py",
+      "source_sha256": "a4c3d6a439e02e1b763efeb0cbe67949b21f3b35fd9347dce3f04ce77e76cee0",
+      "current_sha256": "a4c3d6a439e02e1b763efeb0cbe67949b21f3b35fd9347dce3f04ce77e76cee0",
+      "modified": false
+    },
+    {
+      "path": "SRC/pipeline/agentloop/scenario.py",
+      "source_sha256": "db6604aad638ad7edb9b36a7f42ccf9b2979bc40216e14dc89f5ad9476440e7a",
+      "current_sha256": "8e1289d8cb6927990a6f86def293923735ec1973babd042cb70bb727c8d9529d",
+      "modified": true
+    },
+    {
+      "path": "SRC/pipeline/agentloop/workflow.py",
+      "source_sha256": "5bbd77d3e4db3bb5737dd705be830e0880ed38d21101969616b4ed160696bdc2",
+      "current_sha256": "5bbd77d3e4db3bb5737dd705be830e0880ed38d21101969616b4ed160696bdc2",
+      "modified": false
+    },
+    {
+      "path": "SRC/pipeline/exp_layer/__init__.py",
+      "source_sha256": "d96cb9538b5ed25482433a0b1b910a6f74d7958ddaca8e4f96b1e9ac5431af8f",
+      "current_sha256": "d96cb9538b5ed25482433a0b1b910a6f74d7958ddaca8e4f96b1e9ac5431af8f",
+      "modified": false
+    },
+    {
+      "path": "SRC/pipeline/exp_layer/aero2d/README.md",
+      "source_sha256": "323cc1a8d4edecc49716a7b674a75f4a813bda48f743d0d9ba3eac8afe3f3da3",
+      "current_sha256": "cf881e297f79af68cebc7c3be511f44119c1f928447a291788bbc331383584e8",
+      "modified": true
+    },
+    {
+      "path": "SRC/pipeline/exp_layer/aero2d/__init__.py",
+      "source_sha256": "0a6c7ea9e96f61e76bf608037cbfdf0f052311f131f73ccb92d6dde5a2aa00ad",
+      "current_sha256": "0a6c7ea9e96f61e76bf608037cbfdf0f052311f131f73ccb92d6dde5a2aa00ad",
+      "modified": false
+    },
+    {
+      "path": "SRC/pipeline/exp_layer/aero2d/contract.py",
+      "source_sha256": "f6f16dc74c1a5239381455962184193ceb07303081522371bdeb87517b3c0cef",
+      "current_sha256": "f6f16dc74c1a5239381455962184193ceb07303081522371bdeb87517b3c0cef",
+      "modified": false
+    },
+    {
+      "path": "SRC/pipeline/exp_layer/aero2d/environment.py",
+      "source_sha256": "a9b9e40d171547aa32fc43ed54e7ffd73a21b681100ccdfcecebc55cb102758c",
+      "current_sha256": "a9b9e40d171547aa32fc43ed54e7ffd73a21b681100ccdfcecebc55cb102758c",
+      "modified": false
+    },
+    {
+      "path": "SRC/pipeline/exp_layer/aero2d/evaluation/__init__.py",
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "current_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "modified": false
+    },
+    {
+      "path": "SRC/pipeline/exp_layer/aero2d/evaluation/sweep_report.py",
+      "source_sha256": "098bf8bbfbef7d477b58f0cef408dbcf7d22ac3be5e12da4a059f01f6440c052",
+      "current_sha256": "098bf8bbfbef7d477b58f0cef408dbcf7d22ac3be5e12da4a059f01f6440c052",
+      "modified": false
+    },
+    {
+      "path": "SRC/pipeline/exp_layer/aero2d/evaluation/walk.py",
+      "source_sha256": "f3bf7f462b5ebc456bdc1c2f8b5c3f98a0bdab83629824b5c5e51c4f049ece26",
+      "current_sha256": "f3bf7f462b5ebc456bdc1c2f8b5c3f98a0bdab83629824b5c5e51c4f049ece26",
+      "modified": false
+    },
+    {
+      "path": "SRC/pipeline/exp_layer/common/README.md",
+      "source_sha256": "724454ff6e32dcf32c4db26d82d36fc9f56493daab88080f1977d44f6ac24fea",
+      "current_sha256": "8f2381bbf34d61b8cfe599bc0d989c7cf4f4bd5edd489b3a41336da2b1d45a7d",
+      "modified": true
+    },
+    {
+      "path": "SRC/pipeline/exp_layer/common/__init__.py",
+      "source_sha256": "8b4e532546a7676b24a3371ae30c94d13f4b28e1a278734ca88aaec185c2e0f3",
+      "current_sha256": "8b4e532546a7676b24a3371ae30c94d13f4b28e1a278734ca88aaec185c2e0f3",
+      "modified": false
+    },
+    {
+      "path": "SRC/pyproject.toml",
+      "source_sha256": "31840ef6f4a4adb03282a2fc21507eaf8b81db46b464d4e1e14963cd41ec480b",
+      "current_sha256": "31840ef6f4a4adb03282a2fc21507eaf8b81db46b464d4e1e14963cd41ec480b",
+      "modified": false
+    },
+    {
+      "path": "SRC/test/conftest.py",
+      "source_sha256": "6f53ddb3d50c2ebe8cfc490b418883c94ecd13a31784819c5f4fc4a485fa7ee9",
+      "current_sha256": "de296f7f5ab1289b7d8736698c06a08159513f7191f46c0fcc5629cda148c66b",
+      "modified": true
+    },
+    {
+      "path": "SRC/test/exp/__init__.py",
+      "source_sha256": "576ce40f96a67987cd6b50c92cadc5d4bea8db3b8c1564f4e02b31435efd4152",
+      "current_sha256": "576ce40f96a67987cd6b50c92cadc5d4bea8db3b8c1564f4e02b31435efd4152",
+      "modified": false
+    },
+    {
+      "path": "SRC/test/exp/agentloop_fixtures.py",
+      "source_sha256": "f5babbc2bd635684f62332df1bda51d219092005e4a15710af02c207c045472e",
+      "current_sha256": "45959e2f8f0dbfbaa6076b606339470cf2787559e1ff6e264b5dfed0dba801ec",
+      "modified": true
+    },
+    {
+      "path": "SRC/test/exp/deterministic_environment.py",
+      "source_sha256": "f13c710d72838b643e3888f106bff11018477d58dd0b994690617f5d98e1389c",
+      "current_sha256": "f13c710d72838b643e3888f106bff11018477d58dd0b994690617f5d98e1389c",
+      "modified": false
+    },
+    {
+      "path": "SRC/test/exp/deterministic_environment.yaml",
+      "source_sha256": "e182b4d7668d322f5a292ca7bd484c028ec79fd9ac141daa16b3b4d1fe27f039",
+      "current_sha256": "e182b4d7668d322f5a292ca7bd484c028ec79fd9ac141daa16b3b4d1fe27f039",
+      "modified": false
+    },
+    {
+      "path": "SRC/test/flow/__init__.py",
+      "source_sha256": "94480bcb07c32f3299e18e78d594ad3bccce943799f60c2beda1d5b59939a6b1",
+      "current_sha256": "94480bcb07c32f3299e18e78d594ad3bccce943799f60c2beda1d5b59939a6b1",
+      "modified": false
+    },
+    {
+      "path": "SRC/test/flow/test_flow_aero2d.py",
+      "source_sha256": "97b6ec85d3cd62c2c8ab8fd4b05d5e7139071e5633258e2152263f78a9a5f6c1",
+      "current_sha256": "97b6ec85d3cd62c2c8ab8fd4b05d5e7139071e5633258e2152263f78a9a5f6c1",
+      "modified": false
+    },
+    {
+      "path": "SRC/test/flow/test_flow_agentloop.py",
+      "source_sha256": "42680d1fe7a1b1de7d0950ba0d80cc12acad841f1e46d806ef42c50b049a6d66",
+      "current_sha256": "42680d1fe7a1b1de7d0950ba0d80cc12acad841f1e46d806ef42c50b049a6d66",
+      "modified": false
+    },
+    {
+      "path": "SRC/test/flow/test_flow_environment.py",
+      "source_sha256": "3b2c0fc3ab13306636642952d85e074f92ed7ac235ac9a956a644f4957ccf9b1",
+      "current_sha256": "1b2459fdf1e98ea57da71205c92a57d27d2bad8e9937b84cea78dced8208d21f",
+      "modified": true
+    },
+    {
+      "path": "SRC/test/smoke/__init__.py",
+      "source_sha256": "2cff8e6b2f4b7977565ecdd7909537780d32d477729d5ebef5e9c88bbd04d431",
+      "current_sha256": "2cff8e6b2f4b7977565ecdd7909537780d32d477729d5ebef5e9c88bbd04d431",
+      "modified": false
+    },
+    {
+      "path": "SRC/test/smoke/test_smoke_aero2d.py",
+      "source_sha256": "29ad7e40dfce00e7aefa684ecd8f8786df8888532899f666ea9a617d38d00085",
+      "current_sha256": "29ad7e40dfce00e7aefa684ecd8f8786df8888532899f666ea9a617d38d00085",
+      "modified": false
+    },
+    {
+      "path": "SRC/test/smoke/test_smoke_agentloop.py",
+      "source_sha256": "7d6df3801c46cc6012211ecc325d70b24a7fa41b119c07eee857ce71a890f132",
+      "current_sha256": "7d6df3801c46cc6012211ecc325d70b24a7fa41b119c07eee857ce71a890f132",
+      "modified": false
+    },
+    {
+      "path": "SRC/test/smoke/test_smoke_agentloop_v2.py",
+      "source_sha256": "f49823b7bd1fa1ba0c358e5da3608585ecc8776efd76a90c87aa54b8bb5b3d73",
+      "current_sha256": "f49823b7bd1fa1ba0c358e5da3608585ecc8776efd76a90c87aa54b8bb5b3d73",
+      "modified": false
+    },
+    {
+      "path": "SRC/test/smoke/test_smoke_environment.py",
+      "source_sha256": "13e6ce5ed24a7be09b5ba91fd9059027c40532a0902ddf4e3b1e87cb46a7be57",
+      "current_sha256": "ef0c5752d783cde344db61a7bcb8f8c3e01ef9600e4f2189236559f42e3d1d99",
+      "modified": true
+    },
+    {
+      "path": "SRC/test/unit/__init__.py",
+      "source_sha256": "71ea5ca4145ccab694d1c7b4f426289b2fea907b022413bd89e3e8ad9564c419",
+      "current_sha256": "71ea5ca4145ccab694d1c7b4f426289b2fea907b022413bd89e3e8ad9564c419",
+      "modified": false
+    },
+    {
+      "path": "SRC/test/unit/test_unit_aero2d.py",
+      "source_sha256": "53cdd43cf0c4cf200abeb01bff220d9bf0e21dcb3022052251327a62bbb577c2",
+      "current_sha256": "53cdd43cf0c4cf200abeb01bff220d9bf0e21dcb3022052251327a62bbb577c2",
+      "modified": false
+    },
+    {
+      "path": "SRC/test/unit/test_unit_agentloop.py",
+      "source_sha256": "21f01771f66effcea3d504851f39015a1358adced74d06277e6a9c27ceebc92e",
+      "current_sha256": "21f01771f66effcea3d504851f39015a1358adced74d06277e6a9c27ceebc92e",
+      "modified": false
+    },
+    {
+      "path": "SRC/test/unit/test_unit_agentloop_v2.py",
+      "source_sha256": "d267d904d309c021a28fea0dfb6c9b902a21a6d8d90c0f44d160b21315266f9c",
+      "current_sha256": "d267d904d309c021a28fea0dfb6c9b902a21a6d8d90c0f44d160b21315266f9c",
+      "modified": false
+    },
+    {
+      "path": "SRC/test/unit/test_unit_compatibility.py",
+      "source_sha256": "9ba6ff5a9be5d2948ed8f13991f041663dd37469df4681a70efd9fbeb3df18ef",
+      "current_sha256": "088080196579484f5316c73ea1afbc38e257ac125e38483c366acd9160f4b65e",
+      "modified": true
+    },
+    {
+      "path": "SRC/test/unit/test_unit_environment.py",
+      "source_sha256": "494be68a0f415eee453dc987dbb89d3db892ccb1abdbe945b611fa0a9db285b6",
+      "current_sha256": "62db3b6d72bfd6af465d8992dcc319f25218a12918195d45a6445b36ba5e6692",
+      "modified": true
+    },
+    {
+      "path": "SRC/test/unit/test_unit_workflow.py",
+      "source_sha256": "88d7cfffc45ab193e9a71107995111047c9816436eaf4d24bdba67c05fb6ac85",
+      "current_sha256": "88d7cfffc45ab193e9a71107995111047c9816436eaf4d24bdba67c05fb6ac85",
+      "modified": false
+    }
+  ],
+  "external_dependencies": [
+    {
+      "repository": "https://github.com/WecoAI/aideml",
+      "commit": "6568c8bc27af51fe90ac83cdc87eb59512e4f527",
+      "patch": "RELATED_REPOs/aideml-poc.patch",
+      "patch_sha256": "494fbef491fd23544f1cfe2f8c1ca19ce92b6a29ee0b669fdf8a17c9fe982170"
+    }
+  ],
+  "adaptations": [
+    "Remove non-wing scenario dispatch and non-2D modules/configs/dependencies.",
+    "Limit compatibility fixtures and inherited tests to the nine wing matrix definitions.",
+    "Make the memory test create its own synthetic prior instead of requiring an old sweep output.",
+    "Restore pinned AIDE source plus unchanged patch, and install editable packages in a new environment.",
+    "Add memory-free interview startup configurations and scope-specific setup documentation.",
+    "Preserve original wing physics, objective, runtime and search behavior."
+  ]
+}

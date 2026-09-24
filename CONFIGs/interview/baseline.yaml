@@ -1,0 +1,12 @@
+defaults: [../batch1/aero2d/compat/v1_lineA.yaml]
+exp_name: baseline
+output_root: OUTPUTs/interview
+store: OUTPUTs/interview/store
+budget: 3
+seed: 0
+use_memory: false
+sensitivity: null
+verify_every: 100
+environment:
+  settings:
+    store: OUTPUTs/interview/store

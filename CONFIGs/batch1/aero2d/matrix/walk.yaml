@@ -1,0 +1,7 @@
+defaults: [../_base.yaml]
+exp_name: v1                                # walk 与三条线共用 OUTPUTs/batch1/aero2d/v1/(轨道二,幂等):walk 产物 + tree/ + lines/<line>/
+h_c:       [0.05, 0.067, 0.08, 0.1, 0.134, 0.18, 0.25, 0.35, 0.5, 1.0]
+alpha_deg: [1.0, 3.0, 5.0]
+verify_cases: 2                            # 扫描后随机抽 2 个 case 做 make verify 式重跑
+failure_repro: true                        # 每个 failure.type 至少一个复现 case(写 cases/failures/)
+write_sensitivity: true                    # LLM 总结 → OUTPUTs/v1_walk/SENSITIVITY.md

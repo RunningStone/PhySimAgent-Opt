@@ -1,0 +1,2 @@
+defaults: [../matrix/lineC.yaml, ../environment.yaml]
+compat_source: CONFIGs/batch1/aero2d/matrix/lineC.yaml

@@ -1,0 +1,11 @@
+defaults: [../_base.yaml]
+exp_name: v1                                # walk 与三条线共用 OUTPUTs/batch1/aero2d/v1/(轨道二,幂等):walk 产物 + tree/ + lines/<line>/
+line: B
+budget: 30
+tau: 0.4
+k_backtrack: 4
+k_stagnation: 8
+verify_every: 10
+seed: 0
+cd_max: 0.06                               # 阻力预算;walk 完成后按扫描结果复核
+sensitivity: OUTPUTs/batch1/aero2d/v1/SENSITIVITY.md

@@ -1,0 +1,7 @@
+# 编排级选择(实验定义在 CONFIGs/batch1/aero2d/);脚本按此表启动
+experiment: batch1/aero2d
+walk:  {script: code/run_walk.sh,  config: CONFIGs/batch1/aero2d/matrix/walk.yaml}
+lines: {script: code/run_lines.sh, configs: [CONFIGs/batch1/aero2d/matrix/lineA.yaml, CONFIGs/batch1/aero2d/matrix/lineB.yaml, CONFIGs/batch1/aero2d/matrix/lineC.yaml], env: {LINES: "A B C"}}
+seeds: {script: code/run_seeds.sh, configs: [CONFIGs/batch1/aero2d/matrix/seeds_lineA.yaml, CONFIGs/batch1/aero2d/matrix/seeds_lineB.yaml, CONFIGs/batch1/aero2d/matrix/seeds_lineC.yaml, CONFIGs/batch1/aero2d/matrix/seeds_lineB_nomem.yaml, CONFIGs/batch1/aero2d/matrix/seeds_lineC_nomem.yaml], parallel_groups: 2}
+interface_comparison: {script: ../common/code/run_comparison.sh, env: {ENVIRONMENT: wing}, configs: [CONFIGs/batch1/aero2d/comparison/wing_fixed.yaml, CONFIGs/batch1/aero2d/comparison/wing_agent.yaml]}
+outputs: OUTPUTs/batch1/aero2d

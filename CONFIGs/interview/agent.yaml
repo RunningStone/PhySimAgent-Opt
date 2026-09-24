@@ -1,0 +1,21 @@
+defaults: [../batch1/aero2d/compat/v1_lineC.yaml]
+exp_name: agent
+output_root: OUTPUTs/interview
+store: OUTPUTs/interview/store
+budget: 3
+seed: 0
+use_memory: false
+sensitivity: null
+verify_every: 100
+environment:
+  settings:
+    store: OUTPUTs/interview/store
+workflow:
+  mode: agent
+limits:
+  max_tools_per_candidate: 2
+  total_tools: 8
+  solve_slots: 5
+  total_llm: 10
+  wall_clock_s: 600
+  validation_reserve: 2

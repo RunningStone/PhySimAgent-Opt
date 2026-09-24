@@ -1,0 +1,8 @@
+# v1 = 场景 1(地面效应翼)共享默认值;具体 run 在 matrix/ 里 override
+scenario: wing
+store: OUTPUTs/batch1/aero2d/store                       # simblock 内容寻址缓存(相对 repo 根)
+literature: EXP/batch1/aero2d/data/literature_zerihan2000.json
+llm_model: claude-cli:claude-sonnet-5      # B/C 线与 SENSITIVITY 总结用;通过本机 claude CLI
+camber: 0.04                               # walk 扫描固定弯度
+timeout_s: 900
+output_root: OUTPUTs/batch1/aero2d              # 轨道二产物根:OUTPUTs/<output_root>/<exp_name>

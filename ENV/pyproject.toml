@@ -1,0 +1,25 @@
+[project]
+name = "physimagent-opt-env"
+version = "0.1.0"
+description = "Environment for the 2D ground-effect wing optimization experiment (Mac arm64 native)"
+requires-python = "==3.12.*"
+dependencies = [
+  "gmsh>=4.15",
+  "numpy>=2.0",
+  "scipy>=1.14",
+  "matplotlib>=3.9",
+  "pyyaml>=6.0",
+  "pydantic>=2.9",
+  "pytest>=8.3",
+  "poc",
+  "exp-cases",
+  "aideml",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+poc = { path = "../SRC", editable = true }
+exp-cases = { path = "../EXP", editable = true }
+aideml = { path = "../RELATED_REPOs/aideml", editable = true }

@@ -1,0 +1,21 @@
+# Shared runtime selection for first-batch wing overlays.
+environment:
+  name: simblock-wing-v1
+  entrypoint: pipeline.exp_layer.aero2d.environment:invoke
+  version: simblock-v1
+  data:
+    dataset: zerihan2000
+    version: sha256:8a1b-first-batch-wing-data
+  settings:
+    store: OUTPUTs/batch1/aero2d/store
+    timeout_s: 900
+workflow:
+  mode: fixed
+  fixed: [evaluate]
+limits:
+  max_tools_per_candidate: 1
+  total_tools: null
+  solve_slots: null
+  total_llm: null
+  wall_clock_s: null
+  validation_reserve: 0

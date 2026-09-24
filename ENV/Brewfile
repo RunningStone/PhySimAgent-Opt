@@ -1,0 +1,2 @@
+tap "gerlero/openfoam"
+cask "openfoam@2512"
