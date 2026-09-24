@@ -1,0 +1,431 @@
+schema_version: 1
+suite_id: level0-3-interview-laminar-v1-final
+profiles:
+  M0:
+    flow:
+      U_inf: 1.0
+      chord: 1.0
+      Re: 100.0
+    domain:
+      x_min: -5.0
+      x_max: 10.0
+      y_min: -5.0
+      y_max: 5.0
+    mesh:
+      far: 0.8
+      wing: 0.025
+      mesh_scale: 1.0
+    geometry: &id001
+      x:
+      - 0.0
+      - 0.006155829702
+      - 0.024471741852
+      - 0.054496737906
+      - 0.095491502813
+      - 0.146446609407
+      - 0.206107373854
+      - 0.27300475013
+      - 0.345491502813
+      - 0.42178276748
+      - 0.5
+      - 0.57821723252
+      - 0.654508497187
+      - 0.72699524987
+      - 0.793892626146
+      - 0.853553390593
+      - 0.904508497187
+      - 0.945503262094
+      - 0.975528258148
+      - 0.993844170298
+      - 1.0
+      min_thickness: 0.001
+      max_thickness: 0.3
+      coordinate_bounds:
+      - -0.3
+      - 0.3
+    exploration:
+      mesh_scale:
+      - 0.7
+      - 1.3
+    model: M0
+    solver:
+      application: simpleFoam
+      end_time: 800
+      delta_t: 1.0
+      sample_window: 50
+      residual_tolerance: 1.0e-05
+      force_tolerance: 0.0001
+    numerical_checks: &id002
+    - mesh_ok
+    - residual_ok
+    - force_finite
+    - surface_geometry_ok
+    - force_settled
+  M1:
+    flow:
+      U_inf: 1.0
+      chord: 1.0
+      Re: 100.0
+    domain:
+      x_min: -5.0
+      x_max: 10.0
+      y_min: -5.0
+      y_max: 5.0
+    mesh:
+      far: 0.8
+      wing: 0.025
+      mesh_scale: 1.0
+    geometry:
+      x:
+      - 0.0
+      - 0.006155829702
+      - 0.024471741852
+      - 0.054496737906
+      - 0.095491502813
+      - 0.146446609407
+      - 0.206107373854
+      - 0.27300475013
+      - 0.345491502813
+      - 0.42178276748
+      - 0.5
+      - 0.57821723252
+      - 0.654508497187
+      - 0.72699524987
+      - 0.793892626146
+      - 0.853553390593
+      - 0.904508497187
+      - 0.945503262094
+      - 0.975528258148
+      - 0.993844170298
+      - 1.0
+      min_thickness: 0.001
+      max_thickness: 0.3
+      coordinate_bounds:
+      - -0.3
+      - 0.3
+    exploration:
+      mesh_scale:
+      - 0.7
+      - 1.3
+    model: M1
+    solver:
+      application: pimpleFoam
+      end_time: 5.0
+      delta_t: 0.002
+      averaging_window:
+      - 4.0
+      - 5.0
+      linear_residual_tolerance: 1.0e-07
+      max_courant: 1.0
+    numerical_checks:
+    - mesh_ok
+    - residual_ok
+    - force_finite
+    - surface_geometry_ok
+    - time_window_complete
+    - courant_ok
+common:
+  environment:
+    name: interview-airfoil
+    entrypoint: pipeline.exp_layer.aero2d.interview:invoke
+    version: OpenFOAM-v2512 (2512); build _87ed40d256-20251219; label32 scalar64;
+      gmsh=4.15.2; numpy=2.5.3
+  task:
+    name: target-lift-2d-airfoil
+    prompt: 'This is a required-coverage smoke experiment for an ordinary two-dimensional
+      airfoil. Approach Cl=0.15 under the frozen physical model; maximize J=-abs(Cl-0.15).
+      Use observed evidence for decisions. Every M0 fixed stage needs at least one
+      new feedback-derived design evaluated. At an M1 stage, first independently evaluate
+      every initialized design under M1; if a formally confirmed design already meets
+      |Cl-0.15|<=0.01, an evidence-citing stop is legitimate. Otherwise continue using
+      the new M1 evidence. All decisions must stay within the remaining budget.
+
+      Read experiment.level, experiment.arm and candidate.representation to select
+      your allowed action. Fixed arms use evaluate_design only (or stop); omit requested_numerics
+      and requested_conditions entirely for any formal action. The host already supplies
+      the correct formal condition and settings. Only Level2-b may use explore with
+      requested_numerics.mesh_scale in [0.7,1.3], or submit_for_evaluation with NO
+      requested numerical/condition fields.
+
+      PARAMETERIZED TASK (Levels 0 and 1): change alpha_deg only. In M0, evaluate
+      at least one new feedback-derived design before stopping at |Cl-0.15|<0.01.
+      In M1, use the independently re-evaluated evidence and the M1 stopping rule
+      above.
+
+      EXPLICIT-SHAPE TASK (Levels 2 and 3): demonstrating an actual shape change is
+      REQUIRED, in addition to approaching target lift. Your FIRST new proposed design
+      must modify several upper/lower ordinates with a small smooth shape change,
+      for example a modest camber variation of your choice. Changing alpha alone or
+      reprinting the initial point arrays DOES NOT satisfy this task, even if the
+      lift target is met. Preserve every x station exactly, close both endpoints,
+      retain legal thickness, and return complete literal arrays. You may change alpha
+      together with the shape. Cite the evidence informing both choices. Do not stop
+      merely because an unchanged shape reaches the lift target: an actual changed
+      shape must first be evaluated in this stage. An actually changed shape inherited
+      from M0 must be evaluated anew in M1. That independent M1 evaluation can satisfy
+      the M1 stopping rule if the target is met; otherwise propose further shape/design
+      improvements.
+
+      LEVEL2-b additionally must demonstrate autonomous experimentation: start by
+      choosing a question, a genuinely modified explicit shape, and an authorized
+      non-default mesh_scale for explore. Use the resulting raw evidence to decide
+      subsequent experiments and which design to submit_for_evaluation. Exploration
+      never has a formal score. You choose the actual candidate, mesh scale, question,
+      number of experiments and stopping decision; the host will not automatically
+      confirm a design. After sufficient exploration, submit a worthwhile shape for
+      the independent frozen evaluation. A successful smoke covers explore -> feedback-dependent
+      decision -> formal submission. A budget-forced unconfirmed stop remains honest
+      but does not demonstrate that success path.
+
+      Keep shape changes modest and smooth for this short laminar smoke. Each tested
+      candidate costs one solver call plus four tools; preserve formal-confirmation
+      budget. Stop honestly on exhausted budget or unsupported evidence. This single
+      replicate tests runnable coverage and is not a statistical comparison of algorithm
+      performance.'
+    params:
+      alpha_deg:
+        type: float
+        bounds:
+        - -5.0
+        - 10.0
+        default: 2.0
+    options: {}
+    geometry: *id001
+    objective:
+      field: Cl
+      direction: target
+      target: 0.15
+    constraints: []
+    trust:
+      required: *id002
+    evaluation:
+      tool: post
+      required_conditions:
+      - design
+      allowed_sources:
+      - live
+      ranking_tolerance: 1.0e-12
+      improvement_tolerance: 0.01
+  tools:
+    geometry:
+      requires: []
+      produces:
+      - geometry
+    mesh:
+      requires:
+      - geometry
+      produces:
+      - mesh
+    solve:
+      requires:
+      - mesh
+      produces:
+      - solution
+    post:
+      requires:
+      - solution
+      produces:
+      - post
+  workflow:
+    mode: fixed
+    fixed:
+    - geometry
+    - mesh
+    - solve
+    - post
+  limits:
+    max_candidates: 6
+    total_tools: 24
+    solve_slots: 6
+    total_llm: 6
+    wall_clock_s: 600
+    validation_reserve: 4
+    retries: 0
+    tool_timeout_s: 30
+    llm_timeout_s: 180
+  llm_model: claude-cli:claude-sonnet-5
+  seed: 0
+initialization:
+  parameterized:
+  - representation: parameterized
+    parameters:
+      alpha_deg: 0.0
+  - representation: parameterized
+    parameters:
+      alpha_deg: 2.0
+  explicit_shape:
+  - representation: explicit_shape
+    parameters:
+      alpha_deg: 0.0
+    shape:
+      x:
+      - 0.0
+      - 0.006155829702
+      - 0.024471741852
+      - 0.054496737906
+      - 0.095491502813
+      - 0.146446609407
+      - 0.206107373854
+      - 0.27300475013
+      - 0.345491502813
+      - 0.42178276748
+      - 0.5
+      - 0.57821723252
+      - 0.654508497187
+      - 0.72699524987
+      - 0.793892626146
+      - 0.853553390593
+      - 0.904508497187
+      - 0.945503262094
+      - 0.975528258148
+      - 0.993844170298
+      - 1.0
+      upper:
+      - 0.0
+      - 0.013503368120289747
+      - 0.025893312722760877
+      - 0.03686653482971056
+      - 0.046048828401052365
+      - 0.05308265012293738
+      - 0.057711856483754834
+      - 0.059841126989739854
+      - 0.05955676446828294
+      - 0.05710823230445505
+      - 0.05286150200057158
+      - 0.04724214890523363
+      - 0.0406861838549813
+      - 0.03361042997853773
+      - 0.0264046499722717
+      - 0.01943847644020236
+      - 0.013070945687968927
+      - 0.0076508216471063845
+      - 0.003501362259390672
+      - 0.0008911863436405598
+      - 0.0
+      lower:
+      - -0.0
+      - -0.013503368120289747
+      - -0.025893312722760877
+      - -0.03686653482971056
+      - -0.046048828401052365
+      - -0.05308265012293738
+      - -0.057711856483754834
+      - -0.059841126989739854
+      - -0.05955676446828294
+      - -0.05710823230445505
+      - -0.05286150200057158
+      - -0.04724214890523363
+      - -0.0406861838549813
+      - -0.03361042997853773
+      - -0.0264046499722717
+      - -0.01943847644020236
+      - -0.013070945687968927
+      - -0.0076508216471063845
+      - -0.003501362259390672
+      - -0.0008911863436405598
+      - -0.0
+  - representation: explicit_shape
+    parameters:
+      alpha_deg: 2.0
+    shape:
+      x:
+      - 0.0
+      - 0.006155829702
+      - 0.024471741852
+      - 0.054496737906
+      - 0.095491502813
+      - 0.146446609407
+      - 0.206107373854
+      - 0.27300475013
+      - 0.345491502813
+      - 0.42178276748
+      - 0.5
+      - 0.57821723252
+      - 0.654508497187
+      - 0.72699524987
+      - 0.793892626146
+      - 0.853553390593
+      - 0.904508497187
+      - 0.945503262094
+      - 0.975528258148
+      - 0.993844170298
+      - 1.0
+      upper:
+      - 0.0
+      - 0.013503368120289747
+      - 0.025893312722760877
+      - 0.03686653482971056
+      - 0.046048828401052365
+      - 0.05308265012293738
+      - 0.057711856483754834
+      - 0.059841126989739854
+      - 0.05955676446828294
+      - 0.05710823230445505
+      - 0.05286150200057158
+      - 0.04724214890523363
+      - 0.0406861838549813
+      - 0.03361042997853773
+      - 0.0264046499722717
+      - 0.01943847644020236
+      - 0.013070945687968927
+      - 0.0076508216471063845
+      - 0.003501362259390672
+      - 0.0008911863436405598
+      - 0.0
+      lower:
+      - -0.0
+      - -0.013503368120289747
+      - -0.025893312722760877
+      - -0.03686653482971056
+      - -0.046048828401052365
+      - -0.05308265012293738
+      - -0.057711856483754834
+      - -0.059841126989739854
+      - -0.05955676446828294
+      - -0.05710823230445505
+      - -0.05286150200057158
+      - -0.04724214890523363
+      - -0.0406861838549813
+      - -0.03361042997853773
+      - -0.0264046499722717
+      - -0.01943847644020236
+      - -0.013070945687968927
+      - -0.0076508216471063845
+      - -0.003501362259390672
+      - -0.0008911863436405598
+      - -0.0
+topk: 2
+runs:
+- level: 0
+  arm: base
+  stages:
+  - M0
+  replicate_id: 0
+- level: 1
+  arm: a
+  stages:
+  - M0
+  - M1
+  replicate_id: 0
+- level: 1
+  arm: b
+  stages:
+  - M0
+  - M1
+  replicate_id: 0
+- level: 2
+  arm: a
+  stages:
+  - M0
+  replicate_id: 0
+- level: 2
+  arm: b
+  stages:
+  - M0
+  replicate_id: 0
+- level: 3
+  arm: topk
+  stages:
+  - M0
+  - M1
+  replicate_id: 0

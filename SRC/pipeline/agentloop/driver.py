@@ -16,6 +16,8 @@ import fcntl
 import json
 import subprocess
 import time
+import hashlib
+import random
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import replace
 from pathlib import Path
@@ -28,9 +30,10 @@ from aide.utils import serialize
 from omegaconf import OmegaConf
 
 from .design_agent import DesignAgent, records_of
-from .environment import BudgetError, ProtocolError, parse_design, resolve_task
+from .environment import BudgetError, ProtocolError, ConfigurationError, parse_design, resolve_task, validate_proposal, canonical_design, formal_protocol, _sha
+from .records import RunStore, sum_costs
 from .harness import (
-    LINES, make_exec_code, nelder_mead_propose, objective, perturb_x0, promote_tier, should_stop,
+    LINES, make_exec_code, nelder_mead_propose, objective, perturb_x0, promote_tier, should_stop, select_topk,
 )
 from .scenario import WING_SCENARIO, Scenario, wing_with_cd_max
 from .workflow import ToolRuntime
@@ -157,6 +160,8 @@ def _tree_lock(exp_dir: Path):
 
 def run_line(line_cfg: dict) -> dict:
     """Run one experiment line; every artefact lands under ``exp_dir`` (tree/, lines/<line>[-<run_tag>]/)."""
+    if line_cfg.get("task_spec") is not None and line_cfg["task_spec"].experiment is not None:
+        return _run_experiment_line(line_cfg)
     line = line_cfg["line"]
     if (
         line == "walk"
@@ -671,12 +676,323 @@ def line_cfg_from_yaml(cfg: dict) -> dict:
     return out
 
 
+def validate_suite(suite: dict) -> dict:
+    allowed = {"schema_version", "suite_id", "profiles", "common", "initialization", "topk", "runs", "source_manifest"}
+    if not isinstance(suite, dict) or set(suite) - allowed or suite.get("schema_version") != 1:
+        raise ConfigurationError("invalid or unknown suite fields")
+    if not isinstance(suite.get("suite_id"), str) or not suite["suite_id"]:
+        raise ConfigurationError("suite_id is required")
+    if set(suite.get("profiles", {})) != {"M0", "M1"}:
+        raise ConfigurationError("the frozen physical path requires M0 and M1")
+    if not isinstance(suite.get("topk"), int) or isinstance(suite["topk"], bool) or suite["topk"] < 0:
+        raise ConfigurationError("topk must be a nonnegative integer")
+    expected = {(0, "base"), (1, "a"), (1, "b"), (2, "a"), (2, "b"), (3, "topk")}
+    groups, identities = {}, set()
+    for run in suite.get("runs", []):
+        if set(run) - {"level", "arm", "stages", "replicate_id", "limits"}:
+            raise ConfigurationError("unknown run fields")
+        level, arm, replica = run.get("level"), run.get("arm"), run.get("replicate_id")
+        if (level, arm) not in expected or replica is None:
+            raise ConfigurationError("unknown or incomplete run identity")
+        identity = (level, arm, str(replica))
+        if identity in identities:
+            raise ConfigurationError("duplicate run identity")
+        identities.add(identity)
+        groups.setdefault(str(replica), set()).add((level, arm))
+        stages = ["M0", "M1"] if level in {1, 3} else ["M0"]
+        if run.get("stages") != stages:
+            raise ConfigurationError("run omits or changes a frozen physical node")
+        for stage in stages:
+            _suite_task_config(suite, run, stage)
+    if not groups or any(arms != expected for arms in groups.values()):
+        raise ConfigurationError("every replicate requires all six experimental settings")
+    initialization = suite.get("initialization", {})
+    if set(initialization) != {"parameterized", "explicit_shape"}:
+        raise ConfigurationError("both public design initialization sequences are required")
+    for representation, candidates in initialization.items():
+        if not isinstance(candidates, list) or not candidates:
+            raise ConfigurationError("public initialization cannot be empty")
+        for candidate in candidates:
+            normalized = canonical_design(candidate, suite["common"]["task"].get("geometry", {}))
+            if normalized["representation"] != representation:
+                raise ConfigurationError("initialization representation mismatch")
+    # Paired arms have the same additional budget; all physical settings come
+    # from shared profiles, so no arm can tune the formal protocol.
+    for replica in groups:
+        for level in (1, 2):
+            pair = [r for r in suite["runs"] if r["level"] == level and str(r["replicate_id"]) == replica]
+            if _deep_merge(suite["common"]["limits"], pair[0].get("limits", {})) != _deep_merge(suite["common"]["limits"], pair[1].get("limits", {})):
+                raise ConfigurationError("paired experimental arms must have equal budgets")
+    return copy.deepcopy(suite)
+
+
+def _suite_task_config(suite: dict, run: dict, stage: str) -> dict:
+    config = copy.deepcopy(suite["common"])
+    settings = copy.deepcopy(suite["profiles"][stage])
+    if settings.get("model") != stage:
+        raise ConfigurationError("profile does not implement its physical node")
+    config["environment"]["settings"] = settings
+    if "numerical_checks" in settings:
+        config["task"]["trust"] = {"required": settings["numerical_checks"]}
+    config["limits"] = _deep_merge(config["limits"], run.get("limits", {}))
+    config["experiment"] = {"schema_version": 1, "level": run["level"], "arm": run["arm"], "stage_id": stage,
+                            "parent_stage_id": "M0" if stage == "M1" else None, "replicate_id": run["replicate_id"],
+                            "initialization": "cold" if (run["level"], run["arm"], stage) == (1, "b", "M1") else
+                            ("topk" if stage == "M1" else "public"), "transfer": {}}
+    resolve_task(config, REPO_ROOT)
+    return config
+
+
+def prepare_stage(setup: dict, parent_snapshot: dict | None = None) -> list[dict]:
+    """Project only transferable designs and fill from the public sequence."""
+    public = copy.deepcopy(setup["public_initialization"])
+    count = int(setup.get("topk", 0)) if setup.get("initialization") == "topk" and setup.get("topk", 0) > 0 else len(public)
+    seeds, seen = [], set()
+    if setup.get("initialization") == "topk" and parent_snapshot is not None:
+        for row in select_topk(parent_snapshot.get("formal_results", []), int(setup.get("topk", 0))):
+            candidate = row.get("candidate")
+            if not candidate:
+                raise ConfigurationError("a selected parent has no transferable design")
+            projected = {k: copy.deepcopy(candidate[k]) for k in ("representation", "parameters", "shape") if k in candidate}
+            projected["parent_candidate_ids"] = [row["candidate_id"]]
+            seeds.append({"candidate": projected, "source": "parent_topk", "parent_candidate_id": row["candidate_id"],
+                          "parent_stage_id": row["stage_id"]})
+            seen.add(row["design_hash"])
+    for candidate in public:
+        if len(seeds) >= count:
+            break
+        normalized = canonical_design(candidate, setup.get("geometry", {}))
+        if normalized["design_hash"] in seen:
+            continue
+        seen.add(normalized["design_hash"])
+        clean = {k: copy.deepcopy(normalized[k]) for k in ("representation", "parameters", "shape") if k in normalized}
+        seeds.append({"candidate": clean, "source": "public_initialization"})
+    return seeds
+
+
+def _run_experiment_line(line_cfg: dict) -> dict:
+    task = line_cfg["task_spec"]
+    directory = Path(line_cfg["output_dir"]).resolve()
+    initialization = copy.deepcopy(line_cfg["initialization"])
+    model, seed = line_cfg.get("llm_model"), int(line_cfg.get("seed", 0))
+    runtime = ToolRuntime(task, invoke_fn=line_cfg.get("invoke_fn"), output_dir=directory / "cases")
+    snapshot = {"config_hash": task.config_hash, "protocol": runtime.protocol, "experiment": task.experiment,
+                "initialization": initialization, "model": model, "seed": seed,
+                "settings": task.environment["settings"], "task": task.task, "limits": task.limits,
+                "suite_snapshot_hash": line_cfg.get("suite_snapshot_hash")}
+    if (directory / "run.sqlite3").exists() and not line_cfg.get("resume"):
+        raise ConfigurationError("run exists; use resume to validate and continue it")
+    store = RunStore(directory, snapshot)
+    store.recover_inflight(task.workflow.get("recovery", {}))
+    records = store.load_committed()
+    if records["checkpoint"].get("completed"):
+        return records["checkpoint"]["summary"]
+    (directory / "snapshot.json").write_text(json.dumps(snapshot, indent=2))
+    total = sum_costs(records["ledger"])
+    runtime.ledger.update(tool_queries=total.get("tool_queries", 0), solve_slots=total.get("solver_calls", 0),
+                          tool_seconds=total.get("tool_seconds", 0), llm_calls=total.get("llm_calls", 0))
+    # A resumed wall budget includes committed tool/LLM time and conservative
+    # interruption reservations, instead of starting a fresh clock at zero.
+    runtime.started_at -= float(total.get("wall_seconds", 0))
+    rng = random.Random(seed)
+    def tuple_state(value):
+        return tuple(tuple_state(v) for v in value) if isinstance(value, list) else value
+    if records["checkpoint"].get("rng_state"):
+        rng.setstate(tuple_state(records["checkpoint"]["rng_state"]))
+    scenario = line_cfg_from_yaml({**line_cfg["config"], "output_dir": str(directory)})["scenario"]
+    agent = DesignAgent(task.task["prompt"], _agent_cfg(model, int(task.limits.get("max_candidates", 4)),
+                        int(task.limits.get("wall_clock_s", 600))), Journal(), scenario, "C")
+    agent.backend = line_cfg.get("backend")
+    agent.run_store, agent.initialization = store, initialization
+    agent.n_llm_calls = int(total.get("llm_calls", 0))
+    agent.llm_cwd = directory / "agent"
+    agent.llm_cwd.mkdir(parents=True, exist_ok=True)
+    agent.llm_timeout = float(task.limits.get("llm_timeout_s", task.environment["settings"].get("llm_timeout_s", 120)))
+    exploratory = (task.experiment["level"], task.experiment["arm"]) == (2, "b")
+    max_candidates = int(task.limits.get("max_candidates", 4))
+    if max_candidates <= 0:
+        raise ConfigurationError("max_candidates must be positive")
+    step = int(records["checkpoint"].get("next_step", 0))
+    stop_reason, failed = "candidate_budget", False
+    while step < max_candidates:
+        records = store.load_committed()
+        total = sum_costs(records["ledger"])
+        elapsed = runtime.clock() - runtime.started_at
+        if task.limits.get("wall_clock_s") is not None and elapsed >= float(task.limits["wall_clock_s"]):
+            stop_reason = "wall_clock_budget"
+            break
+        checkpoint = {"next_step": step, "rng_state": rng.getstate(), "visible_evidence": [o["observation_id"] for o in records["observations"]]}
+        if records["checkpoint"].get("pending_proposal") is not None:
+            proposal = records["checkpoint"]["pending_proposal"]
+        elif not exploratory and step < len(initialization):
+            proposal = {"action": "evaluate_design", "candidate": initialization[step]["candidate"],
+                        "question": "Evaluate the frozen stage initialization", "evidence_refs": []}
+        else:
+            agent.budget_view = {"limits": copy.deepcopy(task.limits), "spent": total,
+                                 "remaining_candidates": max_candidates - step}
+            agent.llm_timeout = min(agent.llm_timeout, max(0.001, float(task.limits.get("wall_clock_s", 1e9)) - elapsed))
+            if task.limits.get("total_llm") is not None and agent.n_llm_calls >= task.limits["total_llm"]:
+                stop_reason = "llm_budget"
+                break
+            query_attempt = store.begin_attempt({"action": "request_proposal", "step": step},
+                                                {"llm_calls": 1, "wall_seconds": agent.llm_timeout})
+            before_calls, before_events, started = agent.n_llm_calls, len(agent.llm_events), time.monotonic()
+            try:
+                parent = agent.search_policy()
+                node = agent._ask(parent, agent.last_action or "draft")
+                proposal = node.proposal
+                llm_error = None
+            except Exception as exc:
+                proposal, llm_error = None, str(exc)
+            events = agent.llm_events[before_events:]
+            for index, event in enumerate(events, before_calls + 1):
+                (agent.llm_cwd / f"request-{index:04d}.json").write_text(json.dumps(event, indent=2))
+            llm_cost = {"llm_calls": agent.n_llm_calls - before_calls, "wall_seconds": time.monotonic() - started,
+                        "llm_tokens": "unavailable"}
+            usage = [e.get("usage") for e in events]
+            if usage and all(isinstance(u, dict) and isinstance(u.get("input_tokens"), int) and isinstance(u.get("output_tokens"), int) for u in usage):
+                llm_cost.update(input_tokens=sum(u["input_tokens"] for u in usage), output_tokens=sum(u["output_tokens"] for u in usage))
+                for key in ("cache_creation_input_tokens", "cache_read_input_tokens"):
+                    llm_cost[key] = sum((u.get("info", {}).get("usage") or {}).get(key, 0) for u in usage)
+                llm_cost["llm_tokens"] = sum(llm_cost[k] for k in ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
+            store.commit_attempt(query_attempt, [], None, llm_cost, {**checkpoint, "pending_proposal": proposal})
+            if llm_error is not None:
+                stop_reason, failed = "llm_failure: " + llm_error, True
+                break
+        try:
+            proposal = validate_proposal(proposal, task, [o["observation_id"] for o in records["observations"]])
+        except (ProtocolError, ValueError, TypeError) as exc:
+            attempt = store.begin_attempt({"action": "invalid_proposal", "proposal": proposal, "reason": str(exc)}, {})
+            step += 1
+            store.commit_attempt(attempt, [], None, {"invalid_proposals": 1}, {**checkpoint, "next_step": step})
+            continue
+        if proposal["action"] == "stop":
+            attempt = store.begin_attempt(proposal, {})
+            store.commit_attempt(attempt, [], None, {}, checkpoint)
+            stop_reason = proposal["stop_reason"]
+            break
+        proposal["candidate"]["candidate_id"] = f"L{task.experiment['level']}-{task.experiment['arm']}-{task.experiment['stage_id']}-r{task.experiment['replicate_id']}-candidate-{step:04d}"
+        attempts = 1 + int(task.workflow.get("recovery", {}).get("max_retries", task.limits.get("retries", 0)))
+        conditions = len(proposal.get("requested_conditions") or runtime.protocol["required_conditions"])
+        reservation = {"tool_queries": 4 * conditions * attempts, "solver_calls": conditions * attempts,
+                       "wall_seconds": float(task.limits.get("tool_timeout_s", task.environment["settings"].get("timeout_s", 60))) * 4 * conditions * attempts}
+        # Check before beginning an attempt: unaffordable work has no execution
+        # cost, while every started attempt remains recoverable and chargeable.
+        reserve = int(task.limits.get("validation_reserve", 0)) if proposal["action"] == "explore" else 0
+        if ((task.limits.get("total_tools") is not None and runtime.ledger["tool_queries"] + reservation["tool_queries"] + reserve > task.limits["total_tools"])
+                or (task.limits.get("solve_slots") is not None and runtime.ledger["solve_slots"] + reservation["solver_calls"] + int(bool(reserve)) > task.limits["solve_slots"])):
+            stop_reason = "confirmation_reserve" if reserve else "tool_budget"
+            break
+        attempt = store.begin_attempt(proposal, reservation)
+        if proposal["action"] == "explore":
+            result = runtime._experiment_run(proposal["candidate"], role="exploration", numerics=proposal["requested_numerics"], conditions=proposal["requested_conditions"])
+        else:
+            result = runtime.validate_final(proposal["candidate"])
+        step += 1
+        checkpoint.update(next_step=step, visible_evidence=checkpoint["visible_evidence"] + [o["observation_id"] for o in result["observations"]])
+        store.commit_attempt(attempt, result["observations"], result["assessment"], result["cost"], checkpoint)
+        (directory / f"attempt-{step:04d}.json").write_text(json.dumps({"proposal": proposal, "result": result}, indent=2))
+    records = store.load_committed()
+    ranking = select_topk(records["assessments"], len(records["assessments"]))
+    sources = sorted({o["source"] for o in records["observations"]})
+    failed = failed or bool(records["observations"] and not any(o["status"] == "completed" for o in records["observations"]))
+    total_cost = {"solver_calls": 0, "tool_queries": 0, "tool_seconds": 0.0, "wall_seconds": 0.0, "llm_calls": 0,
+                  **sum_costs(records["ledger"])}
+    summary = {"schema_version": 1, "stage_id": task.experiment["stage_id"], "status": "failed" if failed else "completed",
+               "formal_results": ranking, "best_confirmed": ranking[0] if ranking else None,
+               "unconfirmed": [o for o in records["observations"] if o["role"] == "exploration" and o["design_hash"] not in {r["design_hash"] for r in ranking}],
+               "cost": total_cost, "output_dir": str(directory),
+               "source": sources[0] if len(sources) == 1 else ("mixed" if sources else "none"),
+               "stop_reason": stop_reason, "protocol_hash": runtime.protocol["protocol_hash"], "initialization": initialization}
+    final_attempt = store.begin_attempt({"action": "finish", "stop_reason": stop_reason}, {})
+    store.commit_attempt(final_attempt, [], None, {}, {"completed": not failed, "summary": summary,
+        "next_step": step, "rng_state": rng.getstate(), "visible_evidence": [o["observation_id"] for o in records["observations"]]})
+    store.export()
+    (directory / "summary.json").write_text(json.dumps(summary, indent=2))
+    return summary
+
+
+def run_suite(suite: dict, output_dir: Path, *, backend=None, invoke_fn=None, resume=False) -> dict:
+    suite = validate_suite(suite)
+    output_dir = Path(output_dir).resolve()
+    # Freeze dirty source, not only HEAD. Cold arms share this static identity,
+    # while their evidence databases and process directories remain separate.
+    source_files = [Path(__file__), Path(__file__).with_name("design_agent.py"), Path(__file__).with_name("records.py"),
+                    Path(__file__).with_name("harness.py"), Path(__file__).parent / "evaluation/finding_report.py",
+                    REPO_ROOT / "RELATED_REPOs/aideml/aide/backend/__init__.py",
+                    REPO_ROOT / "RELATED_REPOs/aideml/aide/backend/backend_claude_cli.py",
+                    REPO_ROOT / "RELATED_REPOs/aideml-poc.patch"]
+    manifest = {str(p.relative_to(REPO_ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in source_files}
+    for run in suite["runs"]:
+        for stage in run["stages"]:
+            manifest.update(formal_protocol(resolve_task(_suite_task_config(suite, run, stage)))["implementation"])
+    snapshot = {"suite": suite, "source_manifest": manifest}
+    suite_store = RunStore(output_dir, snapshot)
+    suite_store.recover_inflight({})
+    summaries, completed = [], {}
+    ordered = sorted(suite["runs"], key=lambda r: (str(r["replicate_id"]), r["level"], r["arm"]))
+    for run in ordered:
+        stage_results = []
+        for stage in run["stages"]:
+            replica = str(run["replicate_id"])
+            if run["level"] == 1 and stage == "M0":
+                stage_results.append(copy.deepcopy(completed[(replica, 0, "base", "M0")]))
+                continue
+            config = _suite_task_config(suite, run, stage)
+            representation = "explicit_shape" if run["level"] >= 2 else "parameterized"
+            parent = stage_results[-1] if stage_results else None
+            directory = output_dir / f"L{run['level']}-{run['arm']}" / f"replicate-{replica}" / stage
+            if parent is not None and parent["status"] != "completed":
+                # Parent ranking is not final. Do not freeze a child RunStore
+                # against temporary seeds that a successful resume may change.
+                result = {"schema_version": 1, "stage_id": stage, "status": "blocked", "formal_results": [],
+                          "best_confirmed": None, "unconfirmed": [], "initialization": [],
+                          "cost": {"solver_calls": 0, "tool_queries": 0, "tool_seconds": 0.0, "wall_seconds": 0.0, "llm_calls": 0},
+                          "output_dir": str(directory), "source": "none", "stop_reason": "parent_stage_incomplete",
+                          "protocol_hash": formal_protocol(resolve_task(config))["protocol_hash"],
+                          "blocked_by": {"stage_id": parent["stage_id"], "status": parent["status"], "output_dir": parent["output_dir"]}}
+                directory.mkdir(parents=True, exist_ok=True)
+                (directory / "summary.json").write_text(json.dumps(result, indent=2))
+                stage_results.append(result)
+                continue
+            seeds = prepare_stage({"stage_id": stage, "initialization": config["experiment"]["initialization"],
+                                   "topk": suite["topk"], "public_initialization": suite["initialization"][representation],
+                                   "geometry": config["task"].get("geometry", {})}, parent)
+            result = run_line({"task_spec": resolve_task(config), "config": config, "output_dir": directory,
+                               "llm_model": config.get("llm_model"), "seed": config.get("seed", 0), "initialization": seeds,
+                               "backend": backend, "invoke_fn": invoke_fn, "resume": resume,
+                               "suite_snapshot_hash": _sha(snapshot)})
+            stage_results.append(result)
+            completed[(replica, run["level"], run["arm"], stage)] = result
+        summaries.append({"level": run["level"], "arm": run["arm"], "replicate_id": run["replicate_id"],
+                          "stages": stage_results, "analysis_cost": sum_costs([s["cost"] for s in stage_results])})
+    unique = {s["output_dir"]: s for run in summaries for s in run["stages"]}
+    summary = {"schema_version": 1, "suite_id": suite["suite_id"], "runs": summaries,
+               "physical_execution_cost": sum_costs([s["cost"] for s in unique.values()]),
+               "status": "completed" if all(s["status"] == "completed" for s in unique.values()) else "failed",
+               "source_manifest": manifest}
+    (output_dir / "suite_snapshot.json").write_text(json.dumps(snapshot, indent=2))
+    (output_dir / "summary.json").write_text(json.dumps(summary, indent=2))
+    return summary
+
+
 def main(argv: list[str] | None = None) -> dict | list[dict]:
     """``seeds: [..]`` -> one run per seed (run_tag ``s<seed>``), ``parallel: N`` of them at a time in
     worker processes; returns (and prints) the list of summaries. Without ``seeds``: v1 single run."""
     ap = argparse.ArgumentParser(description="run one experiment line (or its seeds) from a YAML config")
-    ap.add_argument("yaml")
+    ap.add_argument("yaml", nargs="?")
+    ap.add_argument("--suite")
+    ap.add_argument("--output-dir")
+    ap.add_argument("--resume", action="store_true")
     args = ap.parse_args(argv)
+    if args.suite:
+        if not args.output_dir:
+            ap.error("--suite requires --output-dir")
+        summary = run_suite(load_config(args.suite), Path(args.output_dir), resume=args.resume)
+        print(json.dumps(summary, indent=1))
+        return summary
+    if not args.yaml:
+        ap.error("a YAML configuration or --suite is required")
     cfg = load_config(args.yaml)
     if "line" not in cfg and not isinstance(cfg.get("environment"), dict):
         _scenario_from_cfg(cfg)

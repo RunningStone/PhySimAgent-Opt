@@ -24,6 +24,7 @@ from pathlib import Path
 from ..driver import Tree
 from ..harness import aggregate_lines, objective
 from ..scenario import WING_SCENARIO
+from ..records import RunStore, sum_costs
 
 _KEYS = ("line", "seed", "run_tag", "memory_used", "problem_hash", "workflow_mode",
          "environment_name", "n_cases", "n_unique_hash", "best_metric", "best_params",
@@ -97,6 +98,11 @@ def build(exp_dir: Path | str, critical_h_c: float | None = None, out_dir: Path 
     exp_dir = Path(exp_dir)
     out = Path(out_dir) if out_dir else exp_dir / "finding"
     out.mkdir(parents=True, exist_ok=True)
+    summary_file = exp_dir / "summary.json"
+    if summary_file.is_file():
+        summary = json.loads(summary_file.read_text())
+        if summary.get("schema_version") == 1 and "runs" in summary:
+            return _build_level_report(exp_dir, out, summary)
     runs = [(p.parent.name, json.loads(p.read_text())) for p in sorted(exp_dir.glob("lines/*/summary.json"))]
     summaries = [s for _, s in runs]
 
@@ -127,6 +133,113 @@ def build(exp_dir: Path | str, critical_h_c: float | None = None, out_dir: Path 
     tree = exp_dir / "tree"
     (out / "tree_graph.txt").write_text(Tree(tree).log_graph() if (tree / ".git").exists() else "")
     (out / "finding.md").write_text(_markdown(finding))
+    return finding
+
+
+def _build_level_report(exp_dir: Path, out: Path, summary: dict) -> dict:
+    """Rebuild formal curves and the full audit graph from authoritative stores."""
+    groups, stages, memberships = {}, {}, {}
+    for run in summary["runs"]:
+        for stage in run["stages"]:
+            path = stage["output_dir"]
+            stages[path] = stage
+            memberships.setdefault(path, []).append(f"L{run['level']}-{run['arm']}/r{run['replicate_id']}/{stage['stage_id']}")
+    nodes, edges, candidate_nodes, pending_parents = {}, [], {}, []
+    for path, stage in stages.items():
+        directory = Path(path)
+        run_id = str(directory.relative_to(exp_dir))
+        stage_id = stage["stage_id"]
+        identity = stage_id + "|" + stage["protocol_hash"]
+        group = groups.setdefault(identity, {"runs": [], "curves": {}, "cost": {}, "unconfirmed": [], "failures": []})
+        group["runs"].extend(memberships[path])
+        group["cost"] = sum_costs([group["cost"], stage["cost"]])
+        root = "stage:" + run_id
+        nodes[root] = {"id": root, "type": "stage", "stage_id": stage_id, "run_id": run_id,
+                       "status": stage["status"], "protocol_hash": stage["protocol_hash"], "cost": stage["cost"]}
+        if stage["status"] == "blocked":
+            group["curves"][run_id] = []
+            blocked_by = stage.get("blocked_by", {})
+            if blocked_by.get("output_dir"):
+                parent_node = "stage:" + str(Path(blocked_by["output_dir"]).relative_to(exp_dir))
+                if parent_node in nodes:
+                    edges.append({"source": parent_node, "target": root, "type": "blocked_dependency"})
+            continue
+        if not (directory / "run.sqlite3").is_file():
+            raise ValueError(f"executed stage has no authoritative RunStore: {directory}")
+        store = RunStore(directory)
+        records = store.load_committed()
+        store.close()
+        group["unconfirmed"].extend(stage.get("unconfirmed", []))
+        def node(identity, kind, **data):
+            nodes[identity] = {"id": identity, "type": kind, "stage_id": stage_id, "run_id": run_id, **data}
+            return identity
+        root = node("stage:" + run_id, "stage", status=stage["status"], protocol_hash=stage["protocol_hash"], cost=stage["cost"])
+        for observation in records["observations"]:
+            candidate = observation.get("candidate", {})
+            cid = observation["candidate_id"]
+            candidate_node = "candidate:" + run_id + ":" + cid
+            if candidate_node not in nodes:
+                node(candidate_node, "candidate", candidate=candidate, design_hash=observation["design_hash"])
+                candidate_nodes[cid] = candidate_node
+                edges.append({"source": root, "target": candidate_node, "type": "contains"})
+                pending_parents.extend((parent, candidate_node) for parent in candidate.get("parent_candidate_ids", []))
+            obs_node = node("observation:" + observation["observation_id"], "observation", observation=observation)
+            edges.append({"source": candidate_node, "target": obs_node, "type": "observed"})
+            if observation.get("status") == "failed":
+                group["failures"].append(observation)
+        assessment_by_candidate = {}
+        history = records.get("assessment_history") or records["assessments"]
+        for index, assessment in enumerate(history):
+            aid = node(f"assessment:{run_id}:{index}", "assessment", assessment=assessment)
+            assessment_by_candidate.setdefault(assessment.get("candidate_id"), []).append(assessment)
+            for ref in assessment.get("evidence_refs", []):
+                if "observation:" + ref in nodes:
+                    edges.append({"source": "observation:" + ref, "target": aid, "type": "assessed"})
+        curve, cumulative, best = [], {}, None
+        for attempt in records["attempts"]:
+            proposal = attempt["proposal"]
+            aid = node("proposal:" + attempt["attempt_id"], "proposal", proposal=proposal,
+                       status=attempt["status"], cost=attempt["cost"], reservation=attempt["reservation"])
+            edges.append({"source": root, "target": aid, "type": "decided"})
+            for ref in proposal.get("evidence_refs", []):
+                if "observation:" + ref in nodes:
+                    edges.append({"source": "observation:" + ref, "target": aid, "type": "informed"})
+            cid = proposal.get("candidate", {}).get("candidate_id")
+            if cid in candidate_nodes:
+                edges.append({"source": aid, "target": candidate_nodes[cid], "type": "proposed"})
+            cumulative = sum_costs([cumulative, attempt["cost"]])
+            candidates = assessment_by_candidate.get(cid, [])
+            assessment = candidates.pop(0) if candidates else None
+            if assessment and assessment.get("rank_eligible"):
+                if best is None or assessment["objective_value"] > best["objective_value"]:
+                    best = assessment
+                curve.append({"objective_value": best["objective_value"], "actual_objective_value": assessment["objective_value"],
+                              "cumulative_cost": {"solver_calls": 0, **cumulative}, "design_hash": best["design_hash"],
+                              "evidence_refs": best["evidence_refs"], "attempt_id": attempt["attempt_id"]})
+        group["curves"][run_id] = curve
+    for parent, target in pending_parents:
+        if parent in candidate_nodes:
+            edges.append({"source": candidate_nodes[parent], "target": target, "type": "derived_from"})
+    graph = {"schema_version": 1, "nodes": list(nodes.values()), "edges": edges}
+    finding = {"schema_version": 1, "suite_id": summary["suite_id"], "exp_dir": str(exp_dir),
+               "protocol_groups": groups, "physical_execution_cost": summary["physical_execution_cost"],
+               "provenance_graph": graph}
+    (out / "finding.json").write_text(json.dumps(finding, indent=2))
+    (out / "provenance.json").write_text(json.dumps(graph, indent=2))
+    with (out / "formal_curves.csv").open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["protocol", "run", "objective_value", "solver_calls", "wall_seconds", "design_hash"])
+        writer.writeheader()
+        for identity, group in groups.items():
+            for run, curve in group["curves"].items():
+                for point in curve:
+                    writer.writerow({"protocol": identity, "run": run, "objective_value": point["objective_value"],
+                                     "solver_calls": point["cumulative_cost"].get("solver_calls", 0),
+                                     "wall_seconds": point["cumulative_cost"].get("wall_seconds", 0), "design_hash": point["design_hash"]})
+    rows = [{"protocol": identity, "runs": len(group["runs"]), "solver_calls": group["cost"].get("solver_calls", 0),
+             "unconfirmed": len(group["unconfirmed"]), "failed_observations": len(group["failures"])} for identity, group in groups.items()]
+    (out / "finding.md").write_text("# Frozen-protocol experiment evidence\n\n" +
+        _table(("protocol", "runs", "solver_calls", "unconfirmed", "failed_observations"), rows) +
+        "\n\nFormal curves include the cumulative cost of failures, exploration and LLM decisions. Shared M0 physical cost is counted once. Exploration has no formal score. This smoke suite does not establish statistical improvement.\n")
     return finding
 
 

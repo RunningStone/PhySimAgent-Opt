@@ -24,7 +24,7 @@ _ENTRYPOINT = re.compile(
     r"^(?P<module>[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*):"
     r"(?P<function>[A-Za-z_][A-Za-z0-9_]*)$"
 )
-_GENERIC_TOP_LEVEL = {"environment", "task", "tools", "workflow", "limits"}
+_GENERIC_TOP_LEVEL = {"environment", "task", "tools", "workflow", "limits", "experiment"}
 _GENERIC_DRIVER_KEYS = {
     "line", "exp_name", "output_dir", "output_root", "budget", "llm_model", "tau", "k_backtrack",
     "k_stagnation", "verify_every", "seed", "seeds", "parallel", "timeout_s",
@@ -62,10 +62,11 @@ class TaskSpec:
     problem_hash: str
     config_hash: str
     repo_root: Path
+    experiment: dict[str, Any] | None = None
 
 
 def _sha(value: Any) -> str:
-    body = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    body = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
     return "sha256:" + hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
@@ -245,6 +246,9 @@ def resolve_task(merged_config: dict[str, Any], repo_root: Path | str | None = N
         definition = {key: copy.deepcopy(original.get(key, {})) for key in _GENERIC_TOP_LEVEL}
         definition["limits"] = definition.get("limits") or {}
     _validate_definition(definition)
+    experiment = definition.get("experiment") or None
+    if experiment is not None:
+        _validate_experiment(experiment, definition)
     physical = {key: definition[key] for key in ("environment", "task", "tools")}
     root = Path(repo_root or Path(__file__).resolve().parents[3]).resolve()
     return TaskSpec(
@@ -256,7 +260,171 @@ def resolve_task(merged_config: dict[str, Any], repo_root: Path | str | None = N
         problem_hash=_sha(physical),
         config_hash=_sha(definition),
         repo_root=root,
+        experiment=experiment,
     )
+
+
+def _validate_experiment(experiment: dict, definition: dict) -> None:
+    allowed = {"schema_version", "level", "arm", "stage_id", "parent_stage_id", "initialization", "transfer", "replicate_id"}
+    if not isinstance(experiment, dict) or set(experiment) - allowed:
+        raise ConfigurationError("unknown experiment fields")
+    if experiment.get("schema_version") != 1:
+        raise ConfigurationError("experiment.schema_version must be 1")
+    level, arm = experiment.get("level"), experiment.get("arm")
+    if isinstance(level, bool) or (level, arm) not in {(0, "base"), (1, "a"), (1, "b"), (2, "a"), (2, "b"), (3, "topk")}:
+        raise ConfigurationError("unknown level/arm")
+    settings = definition["environment"].get("settings", {})
+    if set(settings) - {"model", "flow", "domain", "mesh", "solver", "geometry", "exploration", "numerical_checks", "versions", "timeout_s", "llm_timeout_s"}:
+        raise ConfigurationError("unknown physical profile field")
+    for section, names in (("flow", ("U_inf", "chord", "Re")), ("mesh", ("far", "wing", "mesh_scale")),
+                           ("solver", ("end_time", "delta_t"))):
+        if not isinstance(settings.get(section), dict) or any(not _finite_number(settings[section].get(name)) or settings[section][name] <= 0 for name in names):
+            raise ConfigurationError(f"{section} must declare positive finite physical/numerical values")
+    if not isinstance(settings.get("domain"), dict) or any(not _finite_number(settings["domain"].get(k)) for k in ("x_min", "x_max", "y_min", "y_max")):
+        raise ConfigurationError("far-field domain is not fully specified")
+    if not isinstance(settings.get("geometry"), dict):
+        raise ConfigurationError("physical geometry contract is required")
+    stage = experiment.get("stage_id")
+    if stage not in {"M0", "M1"} or settings.get("model") != stage:
+        raise ConfigurationError("unknown or inconsistent physical stage")
+    if level in {0, 2} and stage != "M0":
+        raise ConfigurationError("this level is restricted to M0")
+    if definition["workflow"].get("fixed") != ["geometry", "mesh", "solve", "post"]:
+        raise ConfigurationError("interview workflow must execute geometry, mesh, solve, post")
+    task = definition["task"]
+    if task.get("geometry") != settings["geometry"]:
+        raise ConfigurationError("task and physical geometry contracts differ; an explicit mapping is required")
+    allowed_task = {"name", "prompt", "params", "options", "geometry", "objective", "constraints", "trust", "evaluation", "feedback_fields", "proposal_instructions", "recovery_menu", "required_conditions"}
+    if set(task) - allowed_task:
+        raise ConfigurationError("unknown task fields")
+    allowed_limits = {"max_candidates", "max_tools_per_candidate", "total_tools", "solve_slots", "total_llm", "wall_clock_s", "validation_reserve", "retries", "tool_timeout_s", "llm_timeout_s"}
+    if set(definition["limits"]) - allowed_limits:
+        raise ConfigurationError("unknown budget fields")
+    for key, value in definition["limits"].items():
+        if value is not None and (not _finite_number(value) or value < 0):
+            raise ConfigurationError(f"invalid budget {key}")
+    objective = task.get("objective", {})
+    if not objective.get("field") or objective.get("direction") not in {"target", "maximize", "minimize"}:
+        raise ConfigurationError("a valid objective must be frozen")
+    if objective["direction"] == "target" and not _finite_number(objective.get("target")):
+        raise ConfigurationError("target objective needs a finite target")
+    if not isinstance(task.get("constraints", []), list):
+        raise ConfigurationError("constraints must be a list")
+    if level in {2, 3} and not isinstance(task.get("geometry"), dict):
+        raise ConfigurationError("shape experiments require a frozen geometry domain")
+    if (level, arm) == (2, "b") and not settings.get("exploration"):
+        raise ConfigurationError("Level2-b requires a nonempty implemented exploration whitelist")
+    if set(settings.get("exploration", {})) - {"mesh_scale"}:
+        raise ConfigurationError("unsupported exploration control")
+    if "private_validation" in task:
+        raise ConfigurationError("new experiments cannot use legacy private validation")
+
+
+def canonical_design(candidate: dict, geometry_contract: dict) -> dict:
+    """Normalize physical design data; solver settings never enter its hash."""
+    allowed = {"representation", "parameters", "shape", "candidate_id", "parent_candidate_ids", "design_hash", "geometry_validation"}
+    if not isinstance(candidate, dict) or set(candidate) - allowed:
+        raise ProtocolError("candidate contains unknown fields or solver settings")
+    result = copy.deepcopy(candidate)
+    params = result.get("parameters")
+    if not isinstance(params, dict) or not params or any(not _finite_number(v) for v in params.values()):
+        raise ProtocolError("candidate parameters must be finite literal numbers")
+    result["parameters"] = {k: float(v) if float(v) else 0.0 for k, v in params.items()}
+    representation = result.get("representation")
+    if representation == "explicit_shape":
+        from pipeline.exp_layer.aero2d.geometry import normalize_shape, validate_shape
+        try:
+            result["shape"] = normalize_shape(result.get("shape"), {})
+            result["shape"] = validate_shape(result["shape"], geometry_contract)
+            result["shape"] = {key: [0.0 if value == 0 else value for value in values]
+                               for key, values in result["shape"].items()}
+        except (ValueError, TypeError, KeyError) as exc:
+            raise ProtocolError(str(exc)) from exc
+    elif representation != "parameterized" or "shape" in result:
+        raise ProtocolError("unsupported candidate representation")
+    parents = result.get("parent_candidate_ids", [])
+    if not isinstance(parents, list) or any(not isinstance(p, str) or not p for p in parents):
+        raise ProtocolError("parent_candidate_ids must be literal identifiers")
+    if "candidate_id" in result and (not isinstance(result["candidate_id"], str) or not result["candidate_id"]):
+        raise ProtocolError("candidate_id must be an identifier")
+    physical = {key: result[key] for key in ("representation", "parameters", "shape") if key in result}
+    result["design_hash"] = _sha(physical)
+    result["parent_candidate_ids"] = parents
+    return result
+
+
+def validate_proposal(proposal: dict, task: TaskSpec, allowed_evidence=None) -> dict:
+    if task.experiment is None:
+        raise ProtocolError("JSON proposals require experiment.schema_version=1")
+    allowed = {"action", "candidate", "question", "evidence_refs", "requested_numerics", "requested_conditions", "expected_cost", "stop_reason"}
+    if not isinstance(proposal, dict) or set(proposal) - allowed:
+        raise ProtocolError("proposal contains unknown or host-owned fields")
+    result = copy.deepcopy(proposal)
+    exploratory = (task.experiment["level"], task.experiment["arm"]) == (2, "b")
+    actions = {"explore", "submit_for_evaluation", "stop"} if exploratory else {"evaluate_design", "stop"}
+    action = result.get("action")
+    if action not in actions:
+        raise ProtocolError("action is not permitted for this experiment arm")
+    refs = result.get("evidence_refs", [])
+    if not isinstance(refs, list) or any(not isinstance(ref, str) for ref in refs) or not set(refs) <= set(allowed_evidence or []):
+        raise ProtocolError("proposal references unknown or inaccessible evidence")
+    result["evidence_refs"] = refs
+    if action == "stop":
+        if not isinstance(result.get("stop_reason"), str) or not result["stop_reason"].strip():
+            raise ProtocolError("stop needs a reason")
+        if result.get("requested_numerics") or result.get("requested_conditions"):
+            raise ProtocolError("stop cannot request execution")
+        return result
+    candidate = canonical_design(result.get("candidate"), task.task.get("geometry", {}))
+    expected_representation = "explicit_shape" if task.experiment["level"] >= 2 else "parameterized"
+    if candidate["representation"] != expected_representation:
+        raise ProtocolError("candidate representation is not permitted in this level")
+    if set(candidate["parameters"]) != set(task.task["params"]):
+        raise ProtocolError("candidate parameters do not match the task")
+    for key, value in candidate["parameters"].items():
+        _validate_value(key, value, task.task["params"][key])
+    numerics = result.get("requested_numerics", {})
+    conditions = result.get("requested_conditions", [])
+    if not isinstance(numerics, dict) or not isinstance(conditions, list):
+        raise ProtocolError("requested numerics/conditions have invalid types")
+    if action != "explore" and (numerics or conditions):
+        raise ProtocolError("formal numerical settings and conditions are host-owned")
+    whitelist = task.environment.get("settings", {}).get("exploration", {})
+    for key, value in numerics.items():
+        if key not in whitelist or key != "mesh_scale":
+            raise ProtocolError("unsupported or unauthorized numerical control")
+        bound = whitelist[key]
+        spec = bound if isinstance(bound, dict) else {"type": "float", "bounds": bound}
+        _validate_value(key, value, spec)
+        if not _finite_number(value):
+            raise ProtocolError("numerical controls must be finite")
+    if conditions and not set(conditions) <= set(task.task["evaluation"].get("required_conditions", ["design"])):
+        raise ProtocolError("unknown or unauthorized exploration condition")
+    if "expected_cost" in result:
+        estimate = result["expected_cost"]
+        if not (isinstance(estimate, dict) and all(_finite_number(v) and v >= 0 for v in estimate.values())) and not (_finite_number(estimate) and estimate >= 0):
+            raise ProtocolError("expected_cost must be a nonnegative estimate")
+    result.update(candidate=candidate, requested_numerics=numerics, requested_conditions=conditions)
+    return result
+
+
+def formal_protocol(task: TaskSpec) -> dict:
+    """Derive one immutable evaluation identity from physical/task/source truth."""
+    evaluation = task.task.get("evaluation", {})
+    implementation = {}
+    for path in (Path(__file__), Path(__file__).with_name("workflow.py"), Path(__file__).parent / "evaluation/assessment.py",
+                 Path(__file__).parents[1] / "exp_layer/aero2d/interview.py", Path(__file__).parents[1] / "exp_layer/aero2d/geometry.py"):
+        if path.exists():
+            implementation[str(path.relative_to(Path(__file__).parents[1]))] = hashlib.sha256(path.read_bytes()).hexdigest()
+    definition = {"environment": task.environment, "task": task.task, "tools": task.tools, "workflow": task.workflow,
+                  "implementation": implementation}
+    return {"stage_id": task.experiment["stage_id"], "protocol_hash": _sha(definition),
+            "objective": copy.deepcopy(task.task["objective"]), "constraints": copy.deepcopy(task.task.get("constraints", [])),
+            "required_conditions": copy.deepcopy(evaluation.get("required_conditions", ["design"])),
+            "numerical_checks": copy.deepcopy(task.task.get("trust", {}).get("required", [])),
+            "allowed_sources": copy.deepcopy(evaluation.get("allowed_sources", ["live"])),
+            "replicate_id": task.experiment.get("replicate_id", 0),
+            "implementation": implementation, "ranking_tolerance": float(evaluation.get("ranking_tolerance", 1e-12))}
 
 
 def _validate_value(name: str, value: Any, spec: dict[str, Any]) -> None:

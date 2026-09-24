@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import re
+import copy
+from pathlib import Path
 
 import aide.backend
 from aide.agent import Agent
@@ -16,8 +18,8 @@ from aide.journal import Journal, Node
 from aide.utils.metric import MetricValue, WorstMetricValue
 from aide.utils.response import wrap_code
 
-from .harness import PLAN_KEYS, parse_plan, parse_term_out, select_parent
-from .environment import BudgetError
+from .harness import PLAN_KEYS, parse_plan, parse_term_out, select_parent, select_topk, _first_json_object
+from .environment import BudgetError, ProtocolError
 from .scenario import Scenario
 
 _PY_FENCE = re.compile(r"```python\s*\n(.*?)```", re.S)
@@ -70,6 +72,23 @@ class DesignAgent(Agent):
         self.n_llm_calls = 0
         self.backend = None
         self.prompt_trace: list[object] = []
+        self.run_store = None
+        self.initialization = []
+        self.budget_view = {}
+        self.llm_events = []
+        self.llm_cwd = None
+        self.llm_timeout = None
+
+    @property
+    def experiment(self):
+        return self.scenario.task_spec.experiment if self.scenario.task_spec else None
+
+    def _experiment_view(self):
+        records = self.run_store.load_committed() if self.run_store is not None else {"observations": [], "assessments": []}
+        top = select_topk(records["assessments"], 1)
+        confirmed = {a["design_hash"] for a in records["assessments"] if a.get("rank_eligible")}
+        unconfirmed = [o for o in records["observations"] if o.get("role") == "exploration" and o["design_hash"] not in confirmed]
+        return records, top[0] if top else None, unconfirmed
 
     def _reserve_llm(self) -> None:
         """Apply the one configured LLM ceiling to proposals and format retries.
@@ -87,6 +106,11 @@ class DesignAgent(Agent):
 
     # ---- SHEPHERD -------------------------------------------------------------
     def search_policy(self) -> Node | None:
+        if self.experiment:
+            records, _, _ = self._experiment_view()
+            last = records["observations"][-1] if records["observations"] else None
+            self.last_action = "draft" if last is None else ("debug" if last["status"] == "failed" else "improve")
+            return self.journal.nodes[-1] if self.journal.nodes else None
         step, self.last_action = select_parent(records_of(self.journal), self.tau, self.k_backtrack)
         return None if step is None else self.journal.nodes[step]
 
@@ -101,6 +125,17 @@ class DesignAgent(Agent):
         return self._ask(parent_node, "debug")
 
     def _ask(self, parent: Node | None, mode: str) -> Node:
+        if self.experiment:
+            records, best, unconfirmed = self._experiment_view()
+            prompt = {"task": copy.deepcopy(self.scenario.task_spec.task), "experiment": copy.deepcopy(self.experiment),
+                      "observations": copy.deepcopy(records["observations"]), "best_confirmed": best,
+                      "unconfirmed": unconfirmed, "budget": copy.deepcopy(self.budget_view),
+                      "initialization": copy.deepcopy(self.initialization), "instructions": self._instructions(mode)}
+            prompt["rejections"] = [copy.deepcopy(p) for p in records.get("proposals", []) if p.get("action") == "invalid_proposal"][-3:]
+            plan, code = self.plan_and_code_query(prompt)
+            node = Node(plan=plan, code=code, parent=parent)
+            node.proposal = _first_json_object(plan)
+            return node
         prompt: dict = {
             "Introduction": (
                 "You are an engineering design agent running a design-simulate loop."
@@ -123,6 +158,9 @@ class DesignAgent(Agent):
         return Node(plan=plan, code=code, parent=parent)
 
     def _memory(self) -> str:
+        if self.experiment:
+            records, best, unconfirmed = self._experiment_view()
+            return json.dumps({"best_confirmed": best, "unconfirmed": unconfirmed, "observations": records["observations"]})
         best = self.journal.get_best_node()
         head = "(no trusted design evaluated yet)" if best is None else (
             f"Global best so far: objective {best.metric.value:.4f} at step {best.step} with {best.code.strip()}"
@@ -158,6 +196,18 @@ class DesignAgent(Agent):
         return {k: r.get(k) for k in keys}
 
     def _instructions(self, mode: str) -> list[str]:
+        if self.experiment:
+            exploratory = (self.experiment["level"], self.experiment["arm"]) == (2, "b")
+            actions = ["explore", "submit_for_evaluation", "stop"] if exploratory else ["evaluate_design", "stop"]
+            return [
+                "Return one JSON object only. Allowed keys: action, candidate, question, evidence_refs, requested_numerics, requested_conditions, expected_cost, stop_reason.",
+                "Allowed actions: " + ", ".join(actions) + ". Use stop with stop_reason when evidence or budget supports stopping.",
+                "candidate is data: representation, parameters, optional shape, optional parent_candidate_ids. Use the initial representation and frozen parameter/shape domain. No code or file paths.",
+                "Read the observations and state the next empirical question. Cite observation_id in evidence_refs and candidate_id in parent_candidate_ids. Reuse or change the best confirmed design or the latest promising observation; unsuccessful numerical evaluation is not a score.",
+                "Physical model and all formal numerical settings are fixed by the host. No warm starts or custom evaluation rules.",
+                ("Exploration yields raw observations only. You decide when to submit_for_evaluation under fixed settings. Authorized exploration controls: "
+                 + json.dumps(self.scenario.task_spec.environment["settings"].get("exploration", {}))) if exploratory else "Submit evaluate_design for each chosen design under the fixed formal protocol.",
+            ]
         keys = ", ".join(sorted(PLAN_KEYS))
         out = [
             "Respond with exactly two fenced code blocks: first a ```json block, then a ```python block; nothing else in code fences.",
@@ -196,6 +246,31 @@ class DesignAgent(Agent):
         for _ in range(retries):
             self._reserve_llm()
             self.prompt_trace.append(prompt)
+            if self.experiment:
+                event = {"prompt": copy.deepcopy(prompt), "usage": "unavailable", "model": str(self.acfg.code.model)}
+                self.llm_events.append(event)
+                self.n_llm_calls += 1
+                try:
+                    if self.backend is not None:
+                        text = str(self.backend(copy.deepcopy(prompt)))
+                        event["source"] = "injected"
+                    else:
+                        def capture(metadata):
+                            event["usage"] = metadata
+                        text = str(aide.backend.query(
+                            system_message=json.dumps(prompt, ensure_ascii=False, sort_keys=True), user_message=None,
+                            model=self.acfg.code.model, temperature=self.acfg.code.temp, isolated=True,
+                            cwd=str(self.llm_cwd), timeout=self.llm_timeout, metadata_callback=capture))
+                        event["source"] = "live"
+                    event["response"] = text
+                except Exception as exc:
+                    event["error"] = f"{type(exc).__name__}: {exc}"
+                    raise
+                obj = _first_json_object(text)
+                if isinstance(obj, dict):
+                    return json.dumps(obj), ""
+                event["format_error"] = True
+                continue
             text = str(
                 self.backend(prompt)
                 if self.backend is not None
@@ -284,6 +359,12 @@ class DesignAgent(Agent):
         node.absorb_exec_result(exec_result)
         d = parse_term_out("".join(exec_result.term_out))
         node.eval_json = d
+        if self.experiment:
+            assessment = (d or {}).get("assessment")
+            node.analysis = json.dumps(d or {})
+            node.is_buggy = bool(node.exc_type) or (d or {}).get("status") == "failed"
+            node.metric = MetricValue(assessment["objective_value"], maximize=True) if assessment and assessment.get("rank_eligible") else None
+            return
         node.plan_json = parse_plan(node.plan or "")
         if d is None:
             node.analysis = "no EVAL_JSON in output" + (f" ({node.exc_type})" if node.exc_type else "")

@@ -6,6 +6,9 @@ seed perturbation / multi-seed aggregation (v2 REQUIREMENTS §2)."""
 from __future__ import annotations
 
 import json
+import copy
+import math
+from functools import cmp_to_key
 import random
 import re
 import statistics
@@ -13,6 +16,40 @@ from collections import Counter
 from typing import Callable
 
 from scipy.optimize import Bounds, minimize
+
+
+def select_topk(assessments: list[dict], k: int) -> list[dict]:
+    """Rank distinct, formally confirmed designs within one frozen protocol."""
+    if not isinstance(k, int) or isinstance(k, bool) or k < 0:
+        raise ValueError("k must be a nonnegative integer")
+    identities = {(r.get("stage_id"), r.get("protocol_hash")) for r in assessments}
+    if len(identities) > 1:
+        raise ValueError("TopK cannot mix physical stages or formal protocols")
+    groups = {}
+    for row in assessments:
+        value = row.get("objective_value")
+        if (row.get("rank_eligible") is not True or row.get("role", "formal") != "formal"
+                or row.get("completeness") != "complete" or row.get("numerical_status") != "pass"
+                or row.get("feasibility") != "feasible" or not isinstance(value, (int, float))
+                or isinstance(value, bool) or not math.isfinite(value)):
+            continue
+        # The store owns formal deduplication. Do not reward repeated attempts
+        # if a caller passes raw rather than already committed assessments.
+        groups.setdefault(row["design_hash"], {}).setdefault(row.get("replicate_id", 0), row)
+    rows = []
+    for replicas in groups.values():
+        values = list(replicas.values())
+        row = copy.deepcopy(values[0])
+        row["objective_value"] = sum(r["objective_value"] for r in values) / len(values)
+        row["replicate_count"] = len(values)
+        rows.append(row)
+    def compare(a, b):
+        delta = a["objective_value"] - b["objective_value"]
+        tolerance = max(float(a.get("ranking_tolerance", 1e-12)), float(b.get("ranking_tolerance", 1e-12)))
+        if abs(delta) > tolerance:
+            return -1 if delta > 0 else 1
+        return (a["design_hash"] > b["design_hash"]) - (a["design_hash"] < b["design_hash"])
+    return sorted(rows, key=cmp_to_key(compare))[:k]
 
 PLAN_KEYS = frozenset(
     {"reading", "hypothesis", "change", "expected_direction", "kill_criterion", "prediction", "intent", "confidence"}

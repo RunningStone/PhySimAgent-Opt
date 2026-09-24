@@ -12,6 +12,9 @@ import sys
 import tempfile
 import time
 import uuid
+import hashlib
+from datetime import datetime
+from pathlib import Path
 from typing import Any, Callable
 
 from .environment import (
@@ -22,6 +25,9 @@ from .environment import (
     normalize_evaluation,
     parse_design,
     validate_tool_call,
+    canonical_design,
+    validate_proposal,
+    formal_protocol,
 )
 
 
@@ -84,6 +90,8 @@ class ToolRuntime:
         *,
         limits: dict[str, Any] | None = None,
         clock: Callable[[], float] | None = None,
+        output_dir: Path | str | None = None,
+        cache: bool = False,
     ):
         self.task = task
         self.invoke_fn = invoke_fn
@@ -96,6 +104,9 @@ class ToolRuntime:
         self.clock = clock or time.monotonic
         self.started_at = self.clock()
         self.run_id = "run-" + uuid.uuid4().hex[:12]
+        self.output_dir = Path(output_dir or task.repo_root / "OUTPUTs" / (datetime.now().strftime("%Y%m%d_%H%M%S") + "-produce-agentloop") / self.run_id).resolve()
+        self.protocol = formal_protocol(task) if task.experiment else None
+        self.cache_enabled = cache
         self._candidate_counter = 0
         self._call_counter = 0
         self._cache: dict[str, dict[str, Any]] = {}
@@ -111,6 +122,169 @@ class ToolRuntime:
             "tool_seconds": 0.0,
         }
         self.orphan_processes: list[int] = []
+
+    def _experiment_run(self, candidate: dict, *, role: str, numerics=None, conditions=None) -> dict:
+        """Run the same four real tools for formal and exploratory observations."""
+        from .evaluation.assessment import assess
+        from .records import sum_costs, load_observation_cache, save_observation_cache
+        spec = self.task
+        candidate = canonical_design(candidate, spec.task.get("geometry", {}))
+        expected = "explicit_shape" if spec.experiment["level"] >= 2 else "parameterized"
+        if candidate["representation"] != expected or set(candidate["parameters"]) != set(spec.task["params"]):
+            raise ProtocolError("candidate does not match the frozen design domain")
+        # Reuse the parameter-domain boundary, without permitting OPTIONS.
+        parse_design(f"PARAMS = {candidate['parameters']!r}", spec)
+        if role == "exploration":
+            validated = validate_proposal({"action": "explore", "candidate": candidate,
+                "requested_numerics": numerics or {}, "requested_conditions": conditions or []}, spec)
+            numerics, conditions = validated["requested_numerics"], validated["requested_conditions"]
+        elif numerics:
+            raise ProtocolError("formal options cannot be modified")
+        settings = copy.deepcopy(spec.environment["settings"])
+        for key, value in (numerics or {}).items():
+            if key == "mesh_scale":
+                settings.setdefault("mesh", {})[key] = value
+        settings_hash = hashlib.sha256(json.dumps(settings, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+        self._candidate_counter += 1
+        candidate.setdefault("candidate_id", f"{self.run_id}-candidate-{self._candidate_counter}")
+        required = list(conditions or self.protocol["required_conditions"])
+        version = spec.environment.get("version")
+        known_version = isinstance(version, str) and version.lower() not in {"", "unknown", "unavailable", "legacy"}
+        declared_versions = settings.get("versions", {})
+        known_version = known_version and all(v and str(v).lower() not in {"unknown", "unavailable"} for v in declared_versions.values())
+        cache_keys = {condition: json.dumps({"namespace": str(self.output_dir), "experiment": spec.experiment,
+            "protocol_hash": self.protocol["protocol_hash"], "design_hash": candidate["design_hash"],
+            "settings_hash": settings_hash, "condition": condition, "role": role, "version": version,
+            "implementation": self.protocol["implementation"]}, sort_keys=True, separators=(",", ":")) for condition in required}
+        cached, cache_read_seconds = {}, {}
+        for condition in required:
+            lookup_started = self.clock()
+            cached[condition] = load_observation_cache(self.output_dir / "cache", cache_keys[condition]) if self.cache_enabled and known_version else None
+            cache_read_seconds[condition] = max(0.0, self.clock() - lookup_started)
+        retries = int(spec.workflow.get("recovery", {}).get("max_retries", self.limits.get("retries", 0)))
+        if retries < 0:
+            raise ProtocolError("retry limit must be nonnegative")
+        live_conditions = sum(value is None for value in cached.values())
+        planned_tools = 4 * live_conditions * (retries + 1) + len(required) - live_conditions
+        planned_solves = live_conditions * (retries + 1)
+        reserve = int(self.limits.get("validation_reserve", 0)) if role == "exploration" else 0
+        for key, used, planned in (("total_tools", self.ledger["tool_queries"], planned_tools + reserve),
+                                   ("solve_slots", self.ledger["solve_slots"], planned_solves + (1 if reserve else 0))):
+            if self.limits.get(key) is not None and used + planned > self.limits[key]:
+                raise BudgetError(f"insufficient {key} for the complete execution and confirmation reserve")
+        observations, events = [], []
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        started = self.clock()
+        for condition in required:
+            if cached[condition] is not None:
+                original = cached[condition]
+                observed = copy.deepcopy(original)
+                observed.update(observation_id="observation-" + uuid.uuid4().hex, candidate_id=candidate["candidate_id"],
+                    candidate=copy.deepcopy(candidate), source="cache", original_source=original["source"],
+                    original_observation_id=original["observation_id"], original_cost=copy.deepcopy(original["cost"]),
+                    cost={"solver_calls": 0, "tool_queries": 1, "tool_seconds": cache_read_seconds[condition],
+                          "wall_seconds": cache_read_seconds[condition]})
+                self.ledger["tool_queries"] += 1
+                self.ledger["tool_seconds"] += cache_read_seconds[condition]
+                observations.append(observed)
+                continue
+            for retry in range(retries + 1):
+                observation_id = "observation-" + uuid.uuid4().hex
+                case_dir = self.output_dir / observation_id
+                artifacts, diagnostics, raw_metrics, costs, sources = {}, {}, {}, [], []
+                status = "completed"
+                for tool in spec.workflow["fixed"]:
+                    missing = set(spec.tools[tool].get("requires", [])) - set(artifacts)
+                    if missing:
+                        status = "failed"
+                        diagnostics.update(failure_stage=tool, reason=f"missing actual artifacts: {sorted(missing)}")
+                        break
+                    inputs = {"candidate": copy.deepcopy(candidate), "settings": copy.deepcopy(settings),
+                              "case_dir": str(case_dir), "artifacts": copy.deepcopy(artifacts)}
+                    context = {"snapshot": {"settings": copy.deepcopy(settings)}, "candidate_id": candidate["candidate_id"],
+                               "design_hash": candidate["design_hash"], "stage_id": spec.experiment["stage_id"],
+                               "protocol_hash": self.protocol["protocol_hash"], "role": role, "condition": condition,
+                               "run_id": self.run_id, "repo_root": str(spec.repo_root)}
+                    before = self.clock()
+                    self.ledger["tool_queries"] += 1
+                    self.ledger["tool_executions"] += 1
+                    self.ledger["validation_queries" if role == "formal" else "candidate_tool_queries"] += 1
+                    self.ledger["solve_slots"] += int(tool == "solve")
+                    try:
+                        raw = self._call_with_timeout(tool, inputs, context)
+                        if not isinstance(raw, dict):
+                            raise ProtocolError("tool returned a non-mapping")
+                        if raw.get("effective_settings") != settings or raw.get("settings_hash") not in {settings_hash, "sha256:" + settings_hash}:
+                            raise ProtocolError("actual tool settings do not match the host snapshot")
+                        if raw.get("source") not in {"live", "synthetic", "cache", "replay"}:
+                            raise ProtocolError("tool lacks a valid evidence source")
+                        if raw.get("source") == "cache" and not raw.get("original_observation_id"):
+                            raise ProtocolError("cache source lacks original observation identity")
+                        if raw.get("status") not in {"completed", "ok"}:
+                            status = "failed"
+                        returned = raw.get("artifacts", {})
+                        if not isinstance(returned, dict):
+                            raise ProtocolError("artifacts must map names to actual files")
+                        if status == "completed" and not set(spec.tools[tool].get("produces", [])) <= set(returned):
+                            raise ProtocolError("tool did not produce all declared artifacts")
+                        for name, path in returned.items():
+                            resolved = Path(path).resolve()
+                            if not resolved.is_relative_to(case_dir) or not resolved.is_file():
+                                raise ProtocolError("tool artifact is absent or outside the isolated case directory")
+                            artifacts[name] = str(resolved)
+                    except Exception as exc:
+                        status = "failed"
+                        raw = {"status": "failed", "source": "synthetic" if self.invoke_fn is not None else "live",
+                               "diagnostics": {"failure_stage": tool, "reason": str(exc),
+                                               "failure_kind": "timeout" if isinstance(exc, TimeoutError) else "tool_error"}}
+                    elapsed = max(0.0, self.clock() - before)
+                    reported_cost = raw.get("cost", {})
+                    cost = {"tool_queries": 1, "solver_calls": reported_cost.get("solver_calls", int(tool == "solve")),
+                            "tool_seconds": reported_cost.get("tool_seconds", reported_cost.get("tool_time_s", elapsed)),
+                            "wall_seconds": elapsed}
+                    costs.append({"cost": cost})
+                    self.ledger["tool_seconds"] += cost["tool_seconds"]
+                    diagnostics.update(copy.deepcopy(raw.get("diagnostics", {})))
+                    raw_metrics.update(copy.deepcopy(raw.get("raw_metrics", {})))
+                    sources.append(raw.get("source"))
+                    events.append({"tool": tool, "condition": condition, "retry": retry,
+                                   "observation_id": observation_id, "result": copy.deepcopy(raw), "cost": cost})
+                    if status == "failed":
+                        self.ledger["failed_tool_queries"] += 1
+                        break
+                source = sources[-1] if sources else ("synthetic" if self.invoke_fn else "live")
+                if len(set(sources)) > 1:
+                    status = "failed"
+                    diagnostics["reason"] = "inconsistent evidence sources across tool stages"
+                observation = {
+                    "observation_id": observation_id, "candidate_id": candidate["candidate_id"], "candidate": copy.deepcopy(candidate),
+                    "design_hash": candidate["design_hash"], "stage_id": spec.experiment["stage_id"],
+                    "protocol_hash": self.protocol["protocol_hash"], "replicate_id": spec.experiment.get("replicate_id", 0),
+                    "condition": condition, "source": source, "status": status, "role": role,
+                    "raw_metrics": raw_metrics, "diagnostics": diagnostics, "artifacts": artifacts,
+                    "artifact_checksums": {name: hashlib.sha256(Path(path).read_bytes()).hexdigest() for name, path in artifacts.items()},
+                    "cost": sum_costs(costs), "effective_settings": settings, "settings_hash": settings_hash,
+                    "observation_key": hashlib.sha256(json.dumps([candidate["design_hash"], settings_hash,
+                        condition, self.protocol["implementation"], spec.experiment], sort_keys=True).encode()).hexdigest(),
+                }
+                observations.append(observation)
+                if status == "completed":
+                    if self.cache_enabled and known_version:
+                        save_observation_cache(self.output_dir / "cache", cache_keys[condition], observation)
+                    break
+                if diagnostics.get("failure_kind") == "timeout":
+                    break
+        assessment = assess(observations, self.protocol) if role == "formal" else None
+        if assessment:
+            assessment.update(candidate=copy.deepcopy(candidate), ranking_tolerance=self.protocol["ranking_tolerance"])
+        cost = sum_costs(observations)
+        cost["wall_seconds"] = max(0.0, self.clock() - started) + sum(cache_read_seconds.values())
+        return {"status": "completed" if observations and all(o["status"] == "completed" for o in [
+                    next(o for o in reversed(observations) if o["condition"] == c) for c in required]) else "failed",
+                "candidate": candidate, "observations": observations, "assessment": assessment, "cost": cost,
+                "artifacts": observations[-1]["artifacts"] if observations else {}, "tool_calls": events,
+                "metric": assessment.get("objective_value") if assessment and assessment["rank_eligible"] else None,
+                "accepted": bool(assessment and assessment["rank_eligible"]), "ledger": copy.deepcopy(self.ledger)}
 
     def _new_state(self, params=None, options=None) -> dict[str, Any]:
         self._candidate_counter += 1
@@ -180,7 +354,7 @@ class ToolRuntime:
         remaining = None if wall_limit is None else float(wall_limit) - (self.clock() - self.started_at)
         if remaining is not None and remaining <= 0:
             raise TimeoutError("wall-clock budget exhausted")
-        tool_limit = self.task.environment.get("settings", {}).get("timeout_s")
+        tool_limit = self.limits.get("tool_timeout_s", self.task.environment.get("settings", {}).get("timeout_s"))
         deadlines = [float(value) for value in (remaining, tool_limit) if value is not None]
         deadline = min(deadlines) if deadlines else None
         if self._worker_entrypoint is not None:
@@ -221,7 +395,11 @@ class ToolRuntime:
             "inputs": inputs,
             "context": context,
         }
-        with tempfile.TemporaryDirectory(prefix="agentloop-tool-") as directory:
+        worker_root = None
+        if self.task.experiment:
+            worker_root = self.output_dir / "workers"
+            worker_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="agentloop-tool-", dir=worker_root) as directory:
             request_path = os.path.join(directory, "request.json")
             response_path = os.path.join(directory, "response.json")
             with open(request_path, "w", encoding="utf-8") as handle:
@@ -244,7 +422,21 @@ class ToolRuntime:
             try:
                 stdout, stderr = process.communicate(timeout=deadline)
             except subprocess.TimeoutExpired as exc:
-                os.killpg(process.pid, signal.SIGKILL)
+                descendants = _descendants(process.pid)
+                # A solver may create another session: kill those descendants
+                # as well as the worker-owned process group before waiting.
+                for pid in sorted(descendants, reverse=True):
+                    try:
+                        group = os.getpgid(pid)
+                        if group != os.getpgrp():
+                            os.killpg(group, signal.SIGKILL)
+                        os.kill(pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
                 process.communicate()
                 raise TimeoutError("environment tool timed out") from exc
             if process.returncode:
@@ -502,6 +694,8 @@ class ToolRuntime:
         choose_next: Callable | None = None,
         phase: str = "search",
     ) -> dict[str, Any]:
+        if self.task.experiment:
+            return self._experiment_run(params, role="formal" if phase == "validation" else "exploration", numerics=options)
         if phase not in {"search", "validation"}:
             raise ProtocolError("phase must be search or validation")
         parse_design(
@@ -636,6 +830,10 @@ class ToolRuntime:
         }
 
     def validate_final(self, params: dict[str, Any], options: dict[str, Any] | None = None) -> dict[str, Any]:
+        if self.task.experiment:
+            if options:
+                raise ProtocolError("formal options are frozen by the host")
+            return self._experiment_run(params, role="formal")
         self._state = self._new_state(params, options or {})
         tool = self.task.task["evaluation"]["tool"]
         # Host validation is allowed to invoke the terminal tool directly even

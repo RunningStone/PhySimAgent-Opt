@@ -2,7 +2,7 @@ ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/..)
 UV := uv --project $(ROOT)/ENV
 PY := $(UV) run --locked python
 
-.PHONY: repos env test-unit test-smoke test-flow verify
+.PHONY: repos env test-unit test-smoke test-flow test-levels verify
 
 repos:
 	@test -d $(ROOT)/RELATED_REPOs/aideml || git clone -q https://github.com/WecoAI/aideml.git $(ROOT)/RELATED_REPOs/aideml
@@ -26,6 +26,9 @@ test-smoke:
 
 test-flow:
 	cd $(ROOT) && $(PY) -m pytest SRC/test/flow -q --basetemp=OUTPUTs/_pytest/flow
+
+test-levels:
+	cd $(ROOT) && $(PY) -m pytest SRC/test/agentloop SRC/test/aero2d -q --basetemp=OUTPUTs/_pytest/levels
 
 verify:
 	cd $(ROOT) && $(PY) -c 'from pipeline.exp_layer.aero2d import verify, Params; ok, diff = verify(Params(0.3, 2, 0.04)); print("identical" if ok else diff); raise SystemExit(0 if ok else 1)'

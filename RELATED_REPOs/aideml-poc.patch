@@ -11,13 +11,13 @@ index 10c17db..995aa10 100644
      load_task_desc,
      prep_agent_workspace,
 @@ -38,8 +37,7 @@ class Experiment:
- 
+
          self.task_desc = load_task_desc(self.cfg)
- 
+
 -        with Status("Preparing agent workspace (copying and extracting files) ..."):
 -            prep_agent_workspace(self.cfg)
 +        prep_agent_workspace(self.cfg)
- 
+
          self.journal = Journal()
          self.agent = Agent(
 diff --git a/aide/agent.py b/aide/agent.py
@@ -27,7 +27,7 @@ index 2fe9c12..28e4e44 100644
 @@ -2,11 +2,9 @@ import logging
  import random
  from typing import Any, Callable, cast
- 
+
 -import humanize
  from .backend import FunctionSpec, query
  from .interpreter import ExecutionResult
@@ -52,10 +52,10 @@ index 2fe9c12..28e4e44 100644
 +        from .utils import data_preview  # lazy: pulls pandas/genson
 +
          self.data_preview = data_preview.generate(self.cfg.workspace_dir)
- 
+
      def step(self, exec_callback: ExecCallbackType):
 diff --git a/aide/backend/__init__.py b/aide/backend/__init__.py
-index 626df4a..5a95c44 100644
+index 626df4a..126aa1a 100644
 --- a/aide/backend/__init__.py
 +++ b/aide/backend/__init__.py
 @@ -1,4 +1,4 @@
@@ -65,7 +65,7 @@ index 626df4a..5a95c44 100644
  import re
  import logging
 @@ -8,6 +8,9 @@ logger = logging.getLogger("aide")
- 
+
  
  def determine_provider(model: str) -> str:
 +    # local `claude -p` CLI (no API key); must precede the `claude-` prefix check
@@ -80,19 +80,30 @@ index 626df4a..5a95c44 100644
      "gemini": backend_gemini.query,
 +    "claude_cli": backend_claude_cli.query,
  }
+
  
- 
+@@ -71,4 +75,9 @@ def query(
+         **model_kwargs,
+     )
+
++    callback = model_kwargs.get("metadata_callback")
++    if callback is not None:
++        callback({"request_seconds": req_time, "input_tokens": in_tok_count,
++                  "output_tokens": out_tok_count, "info": info})
++
+     return output
 diff --git a/aide/backend/backend_claude_cli.py b/aide/backend/backend_claude_cli.py
 new file mode 100644
-index 0000000..a6eff89
 --- /dev/null
 +++ b/aide/backend/backend_claude_cli.py
-@@ -0,0 +1,28 @@
+@@ -0,0 +1,43 @@
 +"""Backend for the local `claude -p` CLI (no API key; poc fork)."""
 +
 +import json
 +import subprocess
 +import time
++import os
++import signal
 +
 +from .utils import FunctionSpec, OutputType
 +
@@ -108,28 +119,41 @@ index 0000000..a6eff89
 +    model = str(model_kwargs.get("model", "")).removeprefix("claude-cli:")
 +    prompt = "\n\n".join(m for m in (system_message, user_message) if m)
 +    t0 = time.time()
-+    proc = subprocess.run(
-+        ["claude", "-p", prompt, "--output-format", "json", "--model", model],
-+        capture_output=True, text=True, check=True,
-+    )
-+    out = json.loads(proc.stdout)
++    command = ["claude", "-p", prompt, "--output-format", "json", "--model", model]
++    if model_kwargs.get("isolated"):
++        command += ["--safe-mode", "--tools", "", "--no-session-persistence", "--strict-mcp-config",
++                    "--system-prompt", "Follow only the supplied experiment JSON. Return the requested JSON proposal."]
++    proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
++                            cwd=model_kwargs.get("cwd"), start_new_session=True)
++    try:
++        stdout, stderr = proc.communicate(timeout=model_kwargs.get("timeout"))
++    except subprocess.TimeoutExpired:
++        os.killpg(proc.pid, signal.SIGKILL)
++        proc.communicate()
++        raise
++    if proc.returncode:
++        raise subprocess.CalledProcessError(proc.returncode, command, stdout, stderr)
++    out = json.loads(stdout)
++    if out.get("is_error") is True:
++        raise RuntimeError("claude CLI failed: " + str(out.get("result", "unknown error")))
 +    usage = out.get("usage") or {}
-+    info = {"cost_usd": out.get("total_cost_usd"), "session_id": out.get("session_id")}
-+    return out["result"], time.time() - t0, usage.get("input_tokens", 0), usage.get("output_tokens", 0), info
++    info = {"cost_usd": out.get("total_cost_usd"), "session_id": out.get("session_id"),
++            "usage": usage or "unavailable", "isolated": bool(model_kwargs.get("isolated"))}
++    return out["result"], time.time() - t0, usage.get("input_tokens"), usage.get("output_tokens"), info
 diff --git a/aide/interpreter.py b/aide/interpreter.py
 index fc1c53c..2e75451 100644
 --- a/aide/interpreter.py
 +++ b/aide/interpreter.py
 @@ -116,10 +116,6 @@ class Interpreter:
          self.process: Process = None  # type: ignore
- 
+
      def child_proc_setup(self, result_outq: Queue) -> None:
 -        # disable all warnings (before importing anything)
 -        import shutup
 -
 -        shutup.mute_warnings()
          os.chdir(str(self.working_dir))
- 
+
          # this seems to only  benecessary because we're exec'ing code from a string,
 diff --git a/aide/utils/config.py b/aide/utils/config.py
 index 06a8b95..ed687b3 100644
@@ -138,7 +162,7 @@ index 06a8b95..ed687b3 100644
 @@ -4,21 +4,12 @@ from dataclasses import dataclass
  from pathlib import Path
  from typing import Hashable, cast
- 
+
 -import coolname
 -import rich
  from omegaconf import OmegaConf
@@ -146,10 +170,10 @@ index 06a8b95..ed687b3 100644
 -import shutup
 -from rich.logging import RichHandler
  import logging
- 
+
 -from . import tree_export
  from . import copytree, preproc_data, serialize
- 
+
 -shutup.mute_warnings()
 -logging.basicConfig(
 -    level="WARNING", format="%(message)s", datefmt="[%X]", handlers=[RichHandler()]
@@ -157,27 +181,27 @@ index 06a8b95..ed687b3 100644
 +logging.basicConfig(level="WARNING", format="%(message)s", datefmt="[%X]")
  logger = logging.getLogger("aide")
  logger.setLevel(logging.WARNING)
- 
+
 @@ -61,7 +52,7 @@ class ExecConfig:
- 
+
  @dataclass
  class Config(Hashable):
 -    data_dir: Path
 +    data_dir: Path | None  # poc: config.yaml defaults it to null
      desc_file: Path | None
- 
+
      goal: str | None
 @@ -73,7 +64,7 @@ class Config(Hashable):
      preprocess_data: bool
      copy_data: bool
- 
+
 -    exp_name: str
 +    exp_name: str | None  # poc: config.yaml defaults it to null
- 
+
      exec: ExecConfig
      generate_report: bool
 @@ -131,7 +122,10 @@ def prep_cfg(cfg: Config):
- 
+
      # generate experiment name and prefix with consecutive index
      ind = max(_get_next_logindex(top_log_dir), _get_next_logindex(top_workspace_dir))
 -    cfg.exp_name = cfg.exp_name or coolname.generate_slug(3)
@@ -186,17 +210,17 @@ index 06a8b95..ed687b3 100644
 +
 +        cfg.exp_name = coolname.generate_slug(3)
      cfg.exp_name = f"{ind}-{cfg.exp_name}"
- 
+
      cfg.log_dir = (top_log_dir / cfg.exp_name).resolve()
 @@ -145,6 +139,9 @@ def prep_cfg(cfg: Config):
- 
+
  
  def print_cfg(cfg: Config) -> None:
 +    import rich
 +    from rich.syntax import Syntax
 +
      rich.print(Syntax(OmegaConf.to_yaml(cfg), "yaml", theme="paraiso-dark"))
- 
+
  
 @@ -192,6 +189,8 @@ def save_run(cfg: Config, journal):
      # save config
@@ -214,13 +238,13 @@ index 5c5ab11..190fd3d 100644
 @@ -1,7 +1,6 @@
  import json
  import re
- 
+
 -import black
- 
+
  
  def wrap_code(code: str, lang="python") -> str:
 @@ -84,8 +83,5 @@ def extract_text_up_to_code(s):
- 
+
  
  def format_code(code) -> str:
 -    """Format Python code using Black."""
